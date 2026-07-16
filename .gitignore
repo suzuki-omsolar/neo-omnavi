@@ -1,0 +1,3 @@
+# 平文の業務データは絶対にコミットしない(公開リポジトリのため)
+tools/_plain.json
+desktop.ini

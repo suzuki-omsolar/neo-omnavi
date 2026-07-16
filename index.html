@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ネオOMナビ</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- パスワードゲート(データはAES-GCM暗号化済み) -->
+<div class="gate" id="gate">
+  <div class="gate-card">
+    <div class="brand" style="justify-content:center; margin-bottom:12px;"><span class="brand-mark">OM</span> ネオOMナビ</div>
+    <h1>パスワードを入力してください</h1>
+    <p>データは暗号化されています</p>
+    <input type="password" id="pwInput" autocomplete="current-password" autofocus>
+    <p class="gate-err" id="gateErr"></p>
+    <button class="btn btn-primary" id="unlockBtn">開く</button>
+  </div>
+</div>
+
+<div class="shell" style="display:none;" id="shell">
+  <nav class="sidebar">
+    <div class="sidebar-brand"><span class="brand-mark">OM</span><span>ネオOMナビ</span></div>
+    <div class="sidebar-nav" id="sidebarNav">
+      <a class="nav-item" data-nav="dashboard" href="#/">&#9635; ダッシュボード</a>
+      <a class="nav-item" data-nav="cards" href="#/cards">&#9993; アンサーカード</a>
+      <a class="nav-item" data-nav="bukken" href="#/bukken">&#8962; 物件</a>
+      <a class="nav-item" data-nav="koumuten" href="#/koumuten">&#9878; 工務店</a>
+      <a class="nav-item" data-nav="products" href="#/products">&#9713; 商品</a>
+      <a class="nav-item" data-nav="input" href="#/input">&#9998; 今日の入力</a>
+      <div class="nav-divider"></div>
+      <a class="nav-item nav-muted" href="https://suzuki-omsolar.github.io/om-navi-koumuten/" target="_blank" rel="noopener">&#128269; 工務店コード検索 ↗</a>
+      <a class="nav-item nav-muted" href="https://suzuki-omsolar.github.io/om-navi-koumuten/call.html" target="_blank" rel="noopener">&#9742; 通話文字起こし ↗</a>
+    </div>
+    <div class="sidebar-footer">閲覧専用（毎朝データ更新）</div>
+  </nav>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title" id="pageTitle">ダッシュボード</div>
+    </header>
+    <main class="content" id="view"></main>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
