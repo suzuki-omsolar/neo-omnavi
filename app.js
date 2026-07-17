@@ -575,6 +575,165 @@ function renderPending() {
   });
 }
 
+/* ================= 画面: 工務店コード検索 =================
+   om-navi-koumuten/index.html の検索ロジックを移植。
+   データは復号済みの DATA.directory を使うので追加ログイン不要。 */
+var KS = { list: null, byCode: {} };
+var KS_NOISE_RE = /[\s　()（）株有限会社合同名事業協同組合・･.,、。／/\-ー–—~〜「」『』【】\[\]]+/g;
+function ksKataToHira(s) {
+  var out = '';
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+    out += (c >= 0x30A1 && c <= 0x30F6) ? String.fromCharCode(c - 0x60) : s[i];
+  }
+  return out;
+}
+function ksNormalize(text) {
+  if (!text) return '';
+  return ksKataToHira(text.normalize('NFKC').toLowerCase()).replace(KS_NOISE_RE, '');
+}
+function ksBigrams(s) {
+  if (s.length < 2) return s ? [s] : [];
+  var set = {}, out = [];
+  for (var i = 0; i < s.length - 1; i++) { var g = s.substr(i, 2); if (!set[g]) { set[g] = 1; out.push(g); } }
+  return out;
+}
+function ksSimilarity(a, b) {
+  if (!a || !b) return 0;
+  var A = ksBigrams(a), B = ksBigrams(b);
+  if (!A.length || !B.length) return 0;
+  var setB = {}; B.forEach(function (g) { setB[g] = 1; });
+  var inter = 0; A.forEach(function (g) { if (setB[g]) inter++; });
+  return 2 * inter / (A.length + B.length);
+}
+/* お気に入り・利用履歴は独立ページ版と同じ保存場所(omk_*)を使い、引き継ぎ可能にする */
+function ksLoadFavs() { try { return JSON.parse(localStorage.getItem('omk_favs') || '[]'); } catch (e) { return []; } }
+function ksSaveFavs(a) { localStorage.setItem('omk_favs', JSON.stringify(a)); }
+function ksLoadUsage() { try { return JSON.parse(localStorage.getItem('omk_usage') || '{}'); } catch (e) { return {}; } }
+function ksSaveUsage(o) { localStorage.setItem('omk_usage', JSON.stringify(o)); }
+
+var KS_SUBSTRING_LIMIT = 60, KS_RESULT_LIMIT = 40, KS_SIM_FALLBACK = 8, KS_SIM_MIN = 0.3;
+function ksScore(e, qn, favSet, usage) {
+  var s = 0;
+  if (favSet[e.c]) s += 1000;
+  s += Math.min(usage[e.c] || 0, 50) * 5;
+  var nn = ksNormalize(e.n), kn = ksNormalize(e.k);
+  if (nn === qn) s += 500;
+  else if (nn.indexOf(qn) === 0) s += 200;
+  else if (kn.indexOf(qn) === 0) s += 120;
+  if (nn) s += 30 * (qn.length / Math.max(nn.length, 1));
+  if (e.w) s -= 40;
+  return s;
+}
+function ksSearch(query) {
+  var qn = ksNormalize(query);
+  var favSet = {}; ksLoadFavs().forEach(function (c) { favSet[c] = 1; });
+  var usage = ksLoadUsage();
+  if (!qn) return { mode: 'landing', favSet: favSet, usage: usage };
+  var scored = [], seen = {};
+  for (var i = 0; i < KS.list.length && scored.length < KS_SUBSTRING_LIMIT; i++) {
+    var e = KS.list[i];
+    if (e.norm.indexOf(qn) !== -1) { scored.push([ksScore(e, qn, favSet, usage), e]); seen[e.c] = 1; }
+  }
+  if (scored.length < KS_SIM_FALLBACK && qn.length >= 2) {
+    for (var j = 0; j < KS.list.length; j++) {
+      var t = KS.list[j];
+      if (seen[t.c]) continue;
+      var sim = ksSimilarity(qn, ksNormalize(t.n));
+      if (sim < KS_SIM_MIN) sim = Math.max(sim, ksSimilarity(qn, ksNormalize(t.k)));
+      if (sim >= KS_SIM_MIN) scored.push([sim * 100 - 300, t]);
+    }
+  }
+  scored.sort(function (a, b) { return b[0] - a[0]; });
+  return { mode: 'search', items: scored.slice(0, KS_RESULT_LIMIT).map(function (x) { return x[1]; }), favSet: favSet, usage: usage };
+}
+function ksItemHtml(e, favSet, usage) {
+  var use = usage[e.c] || 0;
+  return '<div class="ks-item' + (e.w ? ' is-withdrawn' : '') + '">' +
+    '<button type="button" class="ks-fav-btn' + (favSet[e.c] ? ' is-favorite' : '') + '" data-code="' + esc(e.c) + '" title="お気に入り">' + (favSet[e.c] ? '&#9733;' : '&#9734;') + '</button>' +
+    '<button type="button" class="ks-code-btn" data-code="' + esc(e.c) + '" title="クリックでコードをコピー">' + esc(e.c) + '</button>' +
+    '<div class="ks-item-main">' +
+      '<span class="ks-item-name">' + esc(e.n) + '</span>' +
+      '<span class="ks-item-meta">' + (e.p ? esc(e.p) : '') +
+        (e.w ? '<span class="badge-withdrawn">退会</span>' : '') +
+        (use ? '<span class="badge-use">利用' + use + '回</span>' : '') +
+      '</span>' +
+    '</div></div>';
+}
+function ksListHtml(items, favSet, usage) {
+  return '<div class="ks-list">' + items.map(function (e) { return ksItemHtml(e, favSet, usage); }).join('') + '</div>';
+}
+function ksRenderResults() {
+  var el = document.getElementById('ksResults');
+  var q = document.getElementById('ksQuery');
+  if (!el || !q) return;
+  var r = ksSearch(q.value);
+  var html = '';
+  if (r.mode === 'landing') {
+    var favs = ksLoadFavs().map(function (c) { return KS.byCode[c]; }).filter(Boolean).slice(0, 10);
+    var usagePairs = Object.keys(r.usage).map(function (c) { return [r.usage[c], KS.byCode[c]]; })
+      .filter(function (x) { return x[1] && !r.favSet[x[1].c]; });
+    usagePairs.sort(function (a, b) { return b[0] - a[0]; });
+    var freq = usagePairs.slice(0, 10).map(function (x) { return x[1]; });
+    html += '<div class="ks-section"><div class="ks-section-title">&#9733; お気に入り <span class="ks-section-count">' + favs.length + '件</span></div>' +
+      (favs.length ? ksListHtml(favs, r.favSet, r.usage) : '<div class="empty">お気に入りはまだありません。検索結果の★を押すと登録できます。</div>') + '</div>';
+    html += '<div class="ks-section"><div class="ks-section-title">&#128337; よく使う工務店 <span class="ks-section-count">' + freq.length + '件</span></div>' +
+      (freq.length ? ksListHtml(freq, r.favSet, r.usage) : '<div class="empty">まだ利用履歴がありません。コードをコピーするとここに並びます。</div>') + '</div>';
+  } else {
+    html += '<div class="ks-section"><div class="ks-section-title">検索結果 <span class="ks-section-count">' + r.items.length + '件</span></div>' +
+      (r.items.length ? ksListHtml(r.items, r.favSet, r.usage) : '<div class="empty">一致する工務店が見つかりませんでした。</div>') + '</div>';
+  }
+  el.innerHTML = html;
+}
+function viewKoumutenSearch() {
+  if (!KS.list) {
+    KS.list = DATA.directory.map(function (e) {
+      var o = { c: e.c, n: e.n, k: e.k, p: e.p, w: e.w };
+      o.norm = ksNormalize(o.n) + ksNormalize(o.k);
+      return o;
+    });
+    KS.list.forEach(function (e) { KS.byCode[e.c] = e; });
+  }
+  setTimeout(function () {
+    var q = document.getElementById('ksQuery');
+    if (!q) return;
+    var debounce = null;
+    q.addEventListener('input', function () { clearTimeout(debounce); debounce = setTimeout(ksRenderResults, 150); });
+    q.focus();
+    ksRenderResults();
+  }, 0);
+  return '<div class="ks-searchbox-wrap">' +
+    '<span class="ks-searchbox-icon">&#128269;</span>' +
+    '<input type="text" class="ks-searchbox" id="ksQuery" autocomplete="off" placeholder="工務店名を入力（漢字・ひらがな・カタカナ・一部でOK）">' +
+    '<p class="ks-hint">一文字からあいまい検索できます。数字のコードをクリックするとコードだけをコピーします。</p>' +
+    '</div><div id="ksResults"></div>';
+}
+function ksCopyText(t) {
+  return navigator.clipboard.writeText(t).catch(function () {
+    var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta);
+    ta.select(); try { document.execCommand('copy'); } catch (_) {} ta.remove();
+  });
+}
+document.addEventListener('click', function (ev) {
+  var codeBtn = ev.target.closest('.ks-code-btn');
+  if (codeBtn) {
+    var code = codeBtn.dataset.code;
+    ksCopyText(code);
+    var usage = ksLoadUsage(); usage[code] = (usage[code] || 0) + 1; ksSaveUsage(usage);
+    var orig = codeBtn.textContent;
+    codeBtn.classList.add('copied'); codeBtn.textContent = 'コピー✓';
+    setTimeout(function () { codeBtn.classList.remove('copied'); codeBtn.textContent = orig; }, 1200);
+    return;
+  }
+  var favBtn = ev.target.closest('.ks-fav-btn');
+  if (favBtn) {
+    var c = favBtn.dataset.code, favs = ksLoadFavs(), i = favs.indexOf(c);
+    if (i >= 0) favs.splice(i, 1); else favs.unshift(c);
+    ksSaveFavs(favs);
+    ksRenderResults();
+  }
+});
+
 /* ================= ルーター ================= */
 var ROUTES = [
   { re: /^#?\/?$/, title: 'ダッシュボード', nav: 'dashboard', fn: viewDashboard },
@@ -582,6 +741,7 @@ var ROUTES = [
   { re: /^#\/cards\/(.+)$/, title: 'アンサーカード', nav: 'cards', fn: viewCardDetail },
   { re: /^#\/bukken$/, title: '物件', nav: 'bukken', fn: viewBukken },
   { re: /^#\/bukken\/(.+)$/, title: '物件', nav: 'bukken', fn: viewBukkenDetail },
+  { re: /^#\/koumuten-search$/, title: '工務店コード検索', nav: 'ksearch', fn: viewKoumutenSearch },
   { re: /^#\/koumuten$/, title: '工務店', nav: 'koumuten', fn: viewKoumuten },
   { re: /^#\/koumuten\/(.+)$/, title: '工務店', nav: 'koumuten', fn: viewKoumutenDetail },
   { re: /^#\/products$/, title: '商品', nav: 'products', fn: viewProducts },
