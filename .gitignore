@@ -1,3 +1,8 @@
 # 平文の業務データは絶対にコミットしない(公開リポジトリのため)
 tools/_plain.json
 desktop.ini
+# 実データのCSV/画像を誤って置いてもコミットされないように
+*.csv
+*.png
+*.pdf
+*.xlsx

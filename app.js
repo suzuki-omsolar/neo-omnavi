@@ -734,6 +734,132 @@ document.addEventListener('click', function (ev) {
   }
 });
 
+/* ================= 画面: 商品検索 =================
+   工務店コード検索と同じ仕組み。データは DATA.product_list ({c,n,s,v,st,u,pr}) を使う。 */
+var PS = { list: null, byCode: {} };
+function psLoadFavs() { try { return JSON.parse(localStorage.getItem('omp_favs') || '[]'); } catch (e) { return []; } }
+function psSaveFavs(a) { localStorage.setItem('omp_favs', JSON.stringify(a)); }
+function psLoadUsage() { try { return JSON.parse(localStorage.getItem('omp_usage') || '{}'); } catch (e) { return {}; } }
+function psSaveUsage(o) { localStorage.setItem('omp_usage', JSON.stringify(o)); }
+
+function psScore(e, qn, favSet, usage) {
+  var s = 0;
+  if (favSet[e.c]) s += 1000;
+  s += Math.min(usage[e.c] || 0, 50) * 5;
+  if (e.c === qn) s += 600;
+  else if (e.c.indexOf(qn) === 0) s += 250;
+  var nn = e.nn;
+  if (nn === qn) s += 500;
+  else if (nn.indexOf(qn) === 0) s += 200;
+  if (nn) s += 30 * (qn.length / Math.max(nn.length, 1));
+  if (e.st && e.st.indexOf('終了') !== -1) s -= 40;
+  return s;
+}
+function psSearch(query) {
+  var qn = ksNormalize(query);
+  var favSet = {}; psLoadFavs().forEach(function (c) { favSet[c] = 1; });
+  var usage = psLoadUsage();
+  if (!qn) return { mode: 'landing', favSet: favSet, usage: usage };
+  var scored = [], seen = {};
+  for (var i = 0; i < PS.list.length && scored.length < 200; i++) {
+    var e = PS.list[i];
+    if (e.norm.indexOf(qn) !== -1) { scored.push([psScore(e, qn, favSet, usage), e]); seen[e.c] = 1; }
+  }
+  if (scored.length < KS_SIM_FALLBACK && qn.length >= 2) {
+    for (var j = 0; j < PS.list.length; j++) {
+      var t = PS.list[j];
+      if (seen[t.c]) continue;
+      var sim = ksSimilarity(qn, t.nn);
+      if (sim >= KS_SIM_MIN) scored.push([sim * 100 - 300, t]);
+    }
+  }
+  scored.sort(function (a, b) { return b[0] - a[0]; });
+  return { mode: 'search', items: scored.slice(0, 50).map(function (x) { return x[1]; }), favSet: favSet, usage: usage };
+}
+function psItemHtml(e, favSet, usage) {
+  var use = usage[e.c] || 0;
+  var ended = e.st && e.st.indexOf('終了') !== -1;
+  return '<div class="ps-item' + (ended ? ' is-ended' : '') + '">' +
+    '<button type="button" class="ps-fav-btn' + (favSet[e.c] ? ' is-favorite' : '') + '" data-code="' + esc(e.c) + '" title="お気に入り">' + (favSet[e.c] ? '&#9733;' : '&#9734;') + '</button>' +
+    '<button type="button" class="ps-code-btn" data-code="' + esc(e.c) + '" title="クリックでコードをコピー">' + esc(e.c) + '</button>' +
+    '<span class="ps-name">' + esc(e.n) + '</span>' +
+    '<span class="ps-spec">' + esc(e.s) + '</span>' +
+    '<span class="ps-vendor">' + esc(e.v) + '</span>' +
+    '<span class="ps-price">' + (e.pr && e.pr !== '0' ? '¥' + Number(e.pr).toLocaleString() + (e.u ? '/' + esc(e.u) : '') : '') + '</span>' +
+    '<span class="ps-badges">' +
+      (ended ? '<span class="badge-withdrawn">終了品</span>' : (e.st ? '<span class="badge-use">' + esc(e.st) + '</span>' : '')) +
+      (use ? '<span class="badge-use">利用' + use + '回</span>' : '') +
+    '</span></div>';
+}
+function psListHtml(items, favSet, usage) {
+  return '<div class="ps-list">' + items.map(function (e) { return psItemHtml(e, favSet, usage); }).join('') + '</div>';
+}
+function psRenderResults() {
+  var el = document.getElementById('psResults');
+  var q = document.getElementById('psQuery');
+  if (!el || !q) return;
+  var r = psSearch(q.value);
+  var html = '';
+  if (r.mode === 'landing') {
+    var favs = psLoadFavs().map(function (c) { return PS.byCode[c]; }).filter(Boolean).slice(0, 10);
+    var usagePairs = Object.keys(r.usage).map(function (c) { return [r.usage[c], PS.byCode[c]]; })
+      .filter(function (x) { return x[1] && !r.favSet[x[1].c]; });
+    usagePairs.sort(function (a, b) { return b[0] - a[0]; });
+    var freq = usagePairs.slice(0, 10).map(function (x) { return x[1]; });
+    html += '<div class="ks-section"><div class="ks-section-title">&#9733; お気に入り <span class="ks-section-count">' + favs.length + '件</span></div>' +
+      (favs.length ? psListHtml(favs, r.favSet, r.usage) : '<div class="empty">お気に入りはまだありません。検索結果の★を押すと登録できます。</div>') + '</div>';
+    html += '<div class="ks-section"><div class="ks-section-title">&#128337; よく使う商品 <span class="ks-section-count">' + freq.length + '件</span></div>' +
+      (freq.length ? psListHtml(freq, r.favSet, r.usage) : '<div class="empty">まだ利用履歴がありません。コードをコピーするとここに並びます。</div>') + '</div>';
+  } else {
+    html += '<div class="ks-section"><div class="ks-section-title">検索結果 <span class="ks-section-count">' + r.items.length + '件</span></div>' +
+      (r.items.length ? psListHtml(r.items, r.favSet, r.usage) : '<div class="empty">一致する商品が見つかりませんでした。</div>') + '</div>';
+  }
+  el.innerHTML = html;
+}
+function viewProductSearch() {
+  if (!PS.list) {
+    PS.list = (DATA.product_list || []).map(function (e) {
+      var o = { c: e.c, n: e.n, s: e.s, v: e.v, st: e.st, u: e.u, pr: e.pr };
+      o.nn = ksNormalize(o.n);
+      o.norm = o.c + '|' + o.nn + ksNormalize(o.s) + ksNormalize(o.v);
+      return o;
+    });
+    PS.list.forEach(function (e) { PS.byCode[e.c] = e; });
+  }
+  setTimeout(function () {
+    var q = document.getElementById('psQuery');
+    if (!q) return;
+    var debounce = null;
+    q.addEventListener('input', function () { clearTimeout(debounce); debounce = setTimeout(psRenderResults, 150); });
+    q.focus();
+    psRenderResults();
+  }, 0);
+  return '<div class="ks-searchbox-wrap">' +
+    '<span class="ks-searchbox-icon">&#128269;</span>' +
+    '<input type="text" class="ks-searchbox" id="psQuery" autocomplete="off" placeholder="商品名・規格・コード・仕入先名（一部でOK）">' +
+    '<p class="ks-hint">全' + (DATA.product_list || []).length.toLocaleString() + '件から一文字であいまい検索できます。コードをクリックするとコードだけをコピーします。</p>' +
+    '</div><div id="psResults"></div>';
+}
+document.addEventListener('click', function (ev) {
+  var codeBtn = ev.target.closest('.ps-code-btn');
+  if (codeBtn) {
+    var code = codeBtn.dataset.code;
+    ksCopyText(code);
+    var usage = psLoadUsage(); usage[code] = (usage[code] || 0) + 1; psSaveUsage(usage);
+    var orig = codeBtn.textContent;
+    codeBtn.classList.add('copied'); codeBtn.textContent = 'コピー✓';
+    setTimeout(function () { codeBtn.classList.remove('copied'); codeBtn.textContent = orig; }, 1200);
+    return;
+  }
+  var favBtn = ev.target.closest('.ps-fav-btn');
+  if (favBtn) {
+    var c = favBtn.dataset.code, favs = psLoadFavs(), i = favs.indexOf(c);
+    if (i >= 0) favs.splice(i, 1); else favs.unshift(c);
+    psSaveFavs(favs);
+    psRenderResults();
+  }
+});
+
 /* ================= ルーター ================= */
 var ROUTES = [
   { re: /^#?\/?$/, title: 'ダッシュボード', nav: 'dashboard', fn: viewDashboard },
@@ -744,6 +870,7 @@ var ROUTES = [
   { re: /^#\/koumuten-search$/, title: '工務店コード検索', nav: 'ksearch', fn: viewKoumutenSearch },
   { re: /^#\/koumuten$/, title: '工務店', nav: 'koumuten', fn: viewKoumuten },
   { re: /^#\/koumuten\/(.+)$/, title: '工務店', nav: 'koumuten', fn: viewKoumutenDetail },
+  { re: /^#\/product-search$/, title: '商品検索', nav: 'psearch', fn: viewProductSearch },
   { re: /^#\/products$/, title: '商品', nav: 'products', fn: viewProducts },
   { re: /^#\/products\/(.+)$/, title: '商品', nav: 'products', fn: viewProductDetail },
   { re: /^#\/input$/, title: '今日の入力', nav: 'input', fn: viewInput },

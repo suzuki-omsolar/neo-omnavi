@@ -162,5 +162,22 @@ table.data-table tbody tr.clickable:hover { background: var(--surface-hover); }
 .badge-withdrawn { background: var(--open-bg); color: var(--open-fg); border-radius: 999px; padding: 0 8px; font-size: 11px; }
 .badge-use { background: var(--accent-subtle); color: var(--accent); border-radius: 999px; padding: 0 8px; font-size: 11px; }
 
+/* ---- 商品検索 ---- */
+.ps-list { display: flex; flex-direction: column; gap: 6px; }
+.ps-item { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 3px 10px; box-shadow: var(--shadow); min-width: 0; }
+.ps-item:hover { border-color: var(--border-strong); }
+.ps-item.is-ended { opacity: .72; }
+.ps-fav-btn { border: none; background: transparent; font-size: 19px; line-height: 1; cursor: pointer; color: var(--muted); padding: 2px; flex-shrink: 0; }
+.ps-fav-btn.is-favorite { color: #f5b301; }
+.ps-code-btn { flex-shrink: 0; font-family: var(--mono); font-size: 14px; font-weight: 600; letter-spacing: .04em; color: var(--text); background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 3px 8px; cursor: pointer; width: 84px; text-align: center; transition: all .15s ease; }
+.ps-code-btn:hover { border-color: var(--accent); color: var(--accent); }
+.ps-code-btn.copied { background: var(--done-bg); border-color: var(--done-fg); color: var(--done-fg); }
+.ps-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 120px; }
+.ps-spec { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.ps-vendor { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.ps-price { font-size: 12px; color: var(--text-2); font-family: var(--mono); white-space: nowrap; margin-left: auto; flex-shrink: 0; }
+.ps-badges { display: flex; gap: 6px; flex-shrink: 0; }
+@media (max-width: 760px) { .ps-spec, .ps-vendor { display: none; } }
+
 .toast { position: fixed; bottom: 24px; right: 24px; background: var(--text); color: #fff; padding: 10px 18px; border-radius: var(--radius); font-size: 13px; opacity: 0; transition: opacity .3s; z-index: 60; pointer-events: none; }
 .toast.show { opacity: .95; }
