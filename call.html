@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>通話 文字起こし・自動転記ツール</title>
+<title>通話 文字起こし・AI要約ツール</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   :root { color-scheme: light; }
@@ -14,9 +14,8 @@
   .next-btn { animation: ringpulse 1.6s ease-in-out infinite; }
   .nice-scroll::-webkit-scrollbar { width: 8px; }
   .nice-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
-  .md h1 { font-size:1.2rem; font-weight:700; margin:.4rem 0 .3rem; }
-  .md p { margin:.2rem 0; line-height:1.5; }
-  .md strong { font-weight:700; color:#111827; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid #c7d2fe; border-top-color:#4f46e5; border-radius:50%; animation: spin .8s linear infinite; vertical-align:-2px; }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen text-sm">
@@ -34,7 +33,7 @@
 
 <div class="max-w-5xl mx-auto p-3 sm:p-4">
 
-  <!-- 上段：担当者（左上・欄外）＋ステータス＋メーター -->
+  <!-- 上段：担当者＋ステータス＋メーター -->
   <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3">
     <div class="flex items-center gap-2">
       <span class="text-xs font-semibold text-slate-500">担当者</span>
@@ -49,11 +48,11 @@
     <span id="channelInfo" class="text-xs font-semibold text-slate-400"></span>
     <div class="flex-1 min-w-[220px] grid grid-cols-2 gap-3">
       <div>
-        <div class="flex justify-between text-[10px] text-slate-500"><span>L</span><span id="levelLText">0%</span></div>
+        <div class="flex justify-between text-[10px] text-slate-500"><span>自分(L)</span><span id="levelLText">0%</span></div>
         <div class="h-1.5 bg-slate-200 rounded-full overflow-hidden"><div id="levelL" class="h-full bg-sky-500" style="width:0%"></div></div>
       </div>
       <div>
-        <div class="flex justify-between text-[10px] text-slate-500"><span>R</span><span id="levelRText">0%</span></div>
+        <div class="flex justify-between text-[10px] text-slate-500"><span>相手(R)</span><span id="levelRText">0%</span></div>
         <div class="h-1.5 bg-slate-200 rounded-full overflow-hidden"><div id="levelR" class="h-full bg-amber-500" style="width:0%"></div></div>
       </div>
     </div>
@@ -73,39 +72,32 @@
       <button id="refreshDevices" title="更新" class="px-3 py-2 border border-slate-300 rounded-lg hover:bg-slate-50">↻</button>
     </div>
 
-    <!-- 自動抽出の6項目（各コピー付き） -->
-    <div>
-      <div class="text-xs font-semibold text-slate-500 mb-1">通話から自動抽出（編集可・各コピー可）</div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2" id="fieldsGrid"></div>
-    </div>
-
-    <!-- 文字起こし -->
+    <!-- リアルタイム文字起こし（2者チャット表示・閲覧専用） -->
     <div>
       <div class="flex items-center justify-between mb-1">
-        <label class="block text-xs font-semibold text-slate-500">文字起こし（通話終了後に編集可）</label>
-        <button data-copy="editArea" class="copyBtn text-xs text-emerald-700 hover:underline">📋 全文コピー</button>
+        <label class="block text-xs font-semibold text-slate-500">リアルタイム文字起こし <span class="font-normal text-slate-400">（自分=左/青、相手=右/黄。配線により逆の場合あり）</span></label>
+        <button id="copyTranscriptBtn" class="text-xs text-emerald-700 hover:underline">📋 全文コピー</button>
       </div>
-      <textarea id="editArea" rows="6" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm leading-relaxed nice-scroll focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="通話内容がここにリアルタイムで入ります。"></textarea>
+      <div id="chatArea" class="h-64 overflow-y-auto nice-scroll border border-slate-200 rounded-lg bg-slate-50 px-3 py-3 space-y-2">
+        <p id="chatEmpty" class="text-slate-400 text-center mt-16 text-xs">通話が始まると、ここに会話がリアルタイムで表示されます。</p>
+      </div>
     </div>
 
-    <!-- ボタン群（まとめて／次に押すボタンを強調） -->
+    <!-- ボタン群 -->
     <div class="flex flex-wrap gap-2 items-center pt-1">
-      <button id="endCallBtn" class="px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 active:scale-95 transition">📞 電話終了（要約）</button>
+      <button id="endCallBtn" class="px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 active:scale-95 transition">📞 電話終了（AI要約）</button>
       <button id="saveBtn" class="px-4 py-2.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 active:scale-95 transition">💾 履歴保存</button>
-      <button id="copyBtn" class="px-4 py-2.5 rounded-lg border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 active:scale-95 transition">🔗 要約＋URLコピー</button>
-      <button id="omCopyBtn" class="px-4 py-2.5 rounded-lg border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 active:scale-95 transition">📤 OMナビ用にコピー</button>
+      <button id="copySummaryBtn" class="px-4 py-2.5 rounded-lg border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 active:scale-95 transition">📋 要約コピー</button>
       <span class="flex-1"></span>
       <button id="pauseBtn" class="px-3 py-2 rounded-lg bg-rose-500 text-white font-semibold text-xs hover:bg-rose-600 transition">⏸ 一時停止</button>
       <button id="clearBtn" class="px-3 py-2 rounded-lg border border-slate-300 text-slate-500 font-semibold text-xs hover:bg-slate-50 transition">🗑 新規通話</button>
       <span id="toast" class="text-sm font-semibold self-center opacity-0 transition-opacity"></span>
     </div>
 
-    <!-- 要約結果 -->
+    <!-- AI要約結果 -->
     <div>
-      <label class="block text-xs font-semibold text-slate-500 mb-1">要約結果</label>
-      <div id="summaryOut" class="md min-h-[90px] border border-slate-200 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700">
-        <p class="text-slate-400">「電話終了（要約）」を押すと、ここに要約が出ます。</p>
-      </div>
+      <label class="block text-xs font-semibold text-slate-500 mb-1">AI要約（録音した音声を通話終了後に解析）</label>
+      <div id="summaryOut" class="min-h-[110px] whitespace-pre-wrap leading-relaxed border border-slate-200 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700"><span class="text-slate-400">「電話終了（AI要約）」を押すと、録音音声をAIが解析して タイトル・相手の名前・電話番号・工務店コード・要約 を箇条書きで表示します。</span></div>
     </div>
   </section>
 
@@ -116,43 +108,25 @@
 /* ===== 設定 ===== */
 const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxVvYJ0QD0McQtiitEebL7bmBPyUVmohOeCw9RmYzpZeiy2_lrtQ-5quDoD-_M-kfHg/exec';
 const AGENTS = ['石田','戸塚','根木','水野','村松','藤森','河西','鈴木'];
-const FIELDS = [
-  {id:'companyInput', label:'会社名',       ph:'株式会社○○'},
-  {id:'nameInput',    label:'氏名',         ph:'山田 太郎'},
-  {id:'phoneInput',   label:'電話番号',     ph:'090-1234-5678'},
-  {id:'answerInput',  label:'アンサー番号', ph:'12345'},
-  {id:'bukkenInput',  label:'物件番号',     ph:'050492'},
-  {id:'addressInput', label:'住所',         ph:'○○県○○市…'},
-];
+const MAX_AUDIO_MB = 14; // これを超える録音はAI解析せずフォールバック(Gemini/GASの受信上限対策。32kbpsで約1時間分)
 
 const state = {
   audioContext:null, mediaStream:null, source:null, splitter:null,
   analyserL:null, analyserR:null, recognition:null,
   shouldListen:false, recognitionRunning:false, rafId:null,
   capturing:true, phase:'capturing', transcript:[], callStartAt:null, lastRowUrl:'',
+  recorder:null, chunks:[], summaryText:'', parsed:null,
+  energyL:0, energyR:0,   // 直近発話のチャンネル別音量(話者判定用)
 };
 const $ = (id) => document.getElementById(id);
 
-/* ===== フィールドUI生成 ===== */
-const fieldsGrid = $('fieldsGrid');
-FIELDS.forEach(f => {
-  const wrap = document.createElement('div');
-  wrap.innerHTML =
-    '<label class="block text-[11px] font-semibold text-slate-500 mb-0.5">'+f.label+'</label>'+
-    '<div class="flex gap-1">'+
-      '<input id="'+f.id+'" type="text" placeholder="'+f.ph+'" class="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />'+
-      '<button data-copy="'+f.id+'" class="copyBtn px-2 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50" title="コピー">📋</button>'+
-    '</div>';
-  fieldsGrid.appendChild(wrap);
-});
-
 const deviceSelect=$('deviceSelect'), endCallBtn=$('endCallBtn'), saveBtn=$('saveBtn'),
-  copyBtn=$('copyBtn'), omCopyBtn=$('omCopyBtn'), pauseBtn=$('pauseBtn'), clearBtn=$('clearBtn'),
+  copySummaryBtn=$('copySummaryBtn'), pauseBtn=$('pauseBtn'), clearBtn=$('clearBtn'),
   agentSelect=$('agentSelect'), mySheetLink=$('mySheetLink'),
   startOverlay=$('startOverlay'), overlayStartBtn=$('overlayStartBtn'), overlayError=$('overlayError'),
   statusText=$('statusText'), statusPill=$('statusPill'),
   levelL=$('levelL'), levelR=$('levelR'), levelLText=$('levelLText'), levelRText=$('levelRText'),
-  editArea=$('editArea'), summaryOut=$('summaryOut');
+  chatArea=$('chatArea'), summaryOut=$('summaryOut');
 
 /* ===== 担当者プルダウン ===== */
 AGENTS.forEach(n => { const o=document.createElement('option'); o.value=n; o.textContent=n; agentSelect.appendChild(o); });
@@ -172,14 +146,14 @@ async function listDevices(){
 }
 
 function setStatus(mode){
-  const map={ idle:['停止中','bg-slate-300','text-slate-500'], listening:['待機中','bg-red-500 rec-dot','text-red-600'],
+  const map={ idle:['停止中','bg-slate-300','text-slate-500'], listening:['待機中(録音中)','bg-red-500 rec-dot','text-red-600'],
     paused:['一時停止中','bg-yellow-400','text-yellow-600'], error:['エラー','bg-red-500','text-red-600'] };
   const a=map[mode]||map.idle; statusText.textContent=a[0]; statusText.className=a[2]; statusPill.querySelector('span').className='w-2.5 h-2.5 rounded-full '+a[1];
 }
 function updateChannelInfo(ch){
   const el=$('channelInfo');
   if(ch>=2){ el.textContent='入力：'+ch+'ch'; el.className='text-xs font-semibold text-emerald-600'; }
-  else if(ch===1){ el.textContent='入力：1ch（モノラル）'; el.className='text-xs font-semibold text-rose-600'; }
+  else if(ch===1){ el.textContent='入力：1ch（モノラル・話者分けは近似）'; el.className='text-xs font-semibold text-rose-600'; }
   else el.textContent='';
 }
 
@@ -195,17 +169,52 @@ async function buildAudioGraph(deviceId){
   state.analyserL=state.audioContext.createAnalyser(); state.analyserR=state.audioContext.createAnalyser();
   state.analyserL.fftSize=1024; state.analyserR.fftSize=1024;
   state.splitter.connect(state.analyserL,0); state.splitter.connect(state.analyserR,1);
+  startRecorder();
 }
+
+/* ===== 録音(AI解析用。ブラウザ内のみ保持) ===== */
+function startRecorder(){
+  if(!window.MediaRecorder || !state.mediaStream) return;
+  try{
+    state.chunks=[];
+    const opt = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? {mimeType:'audio/webm;codecs=opus', audioBitsPerSecond:32000} : {};
+    state.recorder=new MediaRecorder(state.mediaStream, opt);
+    state.recorder.ondataavailable=function(e){ if(e.data && e.data.size) state.chunks.push(e.data); };
+    state.recorder.start(1000);
+  }catch(e){ console.warn('録音開始失敗(フォールバック動作):', e); state.recorder=null; }
+}
+function restartRecorder(){
+  if(state.recorder && state.recorder.state!=='inactive'){ try{ state.recorder.stop(); }catch(e){} }
+  startRecorder();
+}
+function stopRecorderAndGetBlob(){
+  return new Promise(function(resolve){
+    if(!state.recorder || state.recorder.state==='inactive'){ resolve(state.chunks.length?new Blob(state.chunks,{type:'audio/webm'}):null); return; }
+    state.recorder.onstop=function(){ resolve(state.chunks.length?new Blob(state.chunks,{type:'audio/webm'}):null); };
+    try{ state.recorder.stop(); }catch(e){ resolve(null); }
+  });
+}
+function blobToBase64(blob){
+  return new Promise(function(resolve,reject){
+    const r=new FileReader();
+    r.onload=function(){ resolve(String(r.result).split(',')[1]); };
+    r.onerror=reject;
+    r.readAsDataURL(blob);
+  });
+}
+
 function rms(a){ const b=new Uint8Array(a.fftSize); a.getByteTimeDomainData(b); let s=0; for(let i=0;i<b.length;i++){const v=(b[i]-128)/128; s+=v*v;} return Math.sqrt(s/b.length); }
 function meterLoop(){
   if(!state.analyserL) return;
   const l=rms(state.analyserL), r=rms(state.analyserR);
+  state.energyL+=l; state.energyR+=r;
   levelL.style.width=Math.min(100,Math.round(l*280))+'%'; levelR.style.width=Math.min(100,Math.round(r*280))+'%';
   levelLText.textContent=Math.min(100,Math.round(l*280))+'%'; levelRText.textContent=Math.min(100,Math.round(r*280))+'%';
   state.rafId=requestAnimationFrame(meterLoop);
 }
 function stopMeters(){ if(state.rafId) cancelAnimationFrame(state.rafId); state.rafId=null; levelL.style.width='0%'; levelR.style.width='0%'; levelLText.textContent='0%'; levelRText.textContent='0%'; }
 
+/* ===== リアルタイム文字起こし ===== */
 function initRecognition(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ alert('Chrome / Edge をお使いください（Web Speech API 未対応）。'); return null; }
@@ -229,63 +238,52 @@ function initRecognition(){
 function safeStartRecognition(){ if(!state.recognition||state.recognitionRunning||!state.shouldListen) return; try{ state.recognition.start(); }catch(e){} }
 
 function nowLabel(){ return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+function currentSide(){
+  // 直近発話のチャンネル別音量で話者を推定(L=自分/R=相手)。ほぼ同じなら不明
+  const l=state.energyL, r=state.energyR;
+  if(l+r<0.01) return '?';
+  if(l>r*1.3) return 'L';
+  if(r>l*1.3) return 'R';
+  return '?';
+}
+function bubbleHtml(t, interim){
+  const escH=function(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});};
+  const side=t.side||'?';
+  const base='max-w-[78%] rounded-xl px-3 py-1.5 text-sm leading-relaxed border';
+  if(side==='L') return '<div class="flex justify-start"><div class="'+base+' bg-sky-50 border-sky-200'+(interim?' opacity-60':'')+'"><span class="block text-[10px] text-sky-500 font-semibold">自分 '+(t.ts||'')+'</span>'+escH(t.text)+'</div></div>';
+  if(side==='R') return '<div class="flex justify-end"><div class="'+base+' bg-amber-50 border-amber-200'+(interim?' opacity-60':'')+'"><span class="block text-[10px] text-amber-600 font-semibold">相手 '+(t.ts||'')+'</span>'+escH(t.text)+'</div></div>';
+  return '<div class="flex justify-center"><div class="'+base+' bg-white border-slate-200 text-slate-600'+(interim?' opacity-60':'')+'"><span class="block text-[10px] text-slate-400 font-semibold">'+(t.ts||'')+'</span>'+escH(t.text)+'</div></div>';
+}
 function renderTranscript(interim){
-  const lines=state.transcript.map(function(t){return t.text;});
-  if(interim) lines.push(interim);
-  editArea.value=lines.join('\n');
-  editArea.scrollTop=editArea.scrollHeight;
+  let html=state.transcript.map(function(t){ return bubbleHtml(t,false); }).join('');
+  if(interim) html+=bubbleHtml({text:interim, side:currentSide(), ts:''}, true);
+  chatArea.innerHTML=html||'<p class="text-slate-400 text-center mt-16 text-xs">通話が始まると、ここに会話がリアルタイムで表示されます。</p>';
+  chatArea.scrollTop=chatArea.scrollHeight;
 }
 function commitFinal(text){
   if(!text||!state.capturing) return;
-  state.transcript.push({text:text, ts:nowLabel()});
+  if(!state.callStartAt) state.callStartAt=new Date();
+  state.transcript.push({text:text, ts:nowLabel(), side:currentSide()});
+  state.energyL=0; state.energyR=0;
   renderTranscript();
-  runExtraction();
 }
-
-/* ===== 自動抽出（無料・正規表現） ===== */
-function toHalf(s){ return s.replace(/[０-９]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);}).replace(/[‐‑―−ー－]/g,'-'); }
-function autoFill(id,value){ if(!value) return; const el=$(id); if(el.value && el.value!==el.dataset.auto) return; el.value=value; el.dataset.auto=value; }
-function fmtPhone(d){
-  if(d.length===11) return d.replace(/(\d{3})(\d{4})(\d{4})/,'$1-$2-$3');
-  if(d.length===10 && /^0[36]/.test(d)) return d.replace(/(\d{2})(\d{4})(\d{4})/,'$1-$2-$3');
-  if(d.length===10) return d.replace(/(\d{3})(\d{3})(\d{4})/,'$1-$2-$3');
-  return d;
-}
-function extractPhone(t){ const s=toHalf(t); const m=s.match(/0\d[\d\-\s]{7,12}\d/); if(!m) return ''; const d=m[0].replace(/[^\d]/g,''); return (d.length>=10&&d.length<=11)?fmtPhone(d):''; }
-function extractAnswer(t){ const m=toHalf(t).match(/アンサー[ 　]*(?:番号|ナンバー|no|NO)?[はがのも：: 　]*([0-9]{2,})/i); return m?m[1]:''; }
-function extractBukken(t){ const m=toHalf(t).match(/物件[ 　]*(?:番号|コード|ナンバー)?[はがのも：: 　]*([0-9]{3,})/); return m?m[1]:''; }
-function extractCompany(t){
-  let m=t.match(/(株式会社|有限会社|合同会社)[ 　]*([^\s、。　]{1,14})/); if(m) return m[1]+m[2];
-  m=t.match(/([一-龥ぁ-んァ-ヶA-Za-z0-9]{1,14})(株式会社|有限会社|工務店|建設|ハウス|ホーム|工業)/); if(m) return m[1]+m[2];
-  return '';
-}
-function extractName(t){
-  let m=t.match(/([一-龥]{1,5})[ 　]?(?:と申します|と言います|といいます)/); if(m) return m[1];
-  m=t.match(/([一-龥]{2,5})[ 　]?(?:さん|様)/); if(m) return m[1];
-  return '';
-}
-function extractAddress(t){ const s=toHalf(t); const m=s.match(/((?:東京都|北海道|大阪府|京都府|[一-龥]{2,3}県)?[一-龥ぁ-ん]{1,6}[市区郡][一-龥ぁ-んA-Za-z0-9\-丁目番地号]{1,30})/); return m?m[1]:''; }
-function runExtraction(){
-  const t=state.transcript.map(function(x){return x.text;}).join(' ');
-  autoFill('companyInput',extractCompany(t));
-  autoFill('nameInput',extractName(t));
-  autoFill('phoneInput',extractPhone(t));
-  autoFill('answerInput',extractAnswer(t));
-  autoFill('bukkenInput',extractBukken(t));
-  autoFill('addressInput',extractAddress(t));
+function transcriptText(){
+  return state.transcript.map(function(t){ return (t.side==='L'?'自分: ':t.side==='R'?'相手: ':'')+t.text; }).join('\n');
 }
 
 async function startCall(){
-  if(!state.audioContext){ await buildAudioGraph(deviceSelect.value); if(!state.callStartAt) state.callStartAt=new Date(); }
+  if(!state.audioContext){ await buildAudioGraph(deviceSelect.value); }
   else if(state.audioContext.state==='suspended') await state.audioContext.resume();
   state.recognition=state.recognition||initRecognition();
   if(!state.recognition) throw new Error('認識初期化失敗');
   state.shouldListen=true; safeStartRecognition(); meterLoop();
+  if(state.recorder && state.recorder.state==='paused'){ try{ state.recorder.resume(); }catch(e){} }
   setStatus('listening'); pauseBtn.textContent='⏸ 一時停止'; pauseBtn.className='px-3 py-2 rounded-lg bg-rose-500 text-white font-semibold text-xs hover:bg-rose-600 transition';
 }
 function pauseCall(){
   state.shouldListen=false;
   if(state.recognition){ try{ state.recognition.stop(); }catch(e){} }
+  if(state.recorder && state.recorder.state==='recording'){ try{ state.recorder.pause(); }catch(e){} }
   if(state.audioContext && state.audioContext.state==='running') state.audioContext.suspend();
   stopMeters(); setStatus('paused');
   pauseBtn.textContent='▶ 待機再開'; pauseBtn.className='px-3 py-2 rounded-lg bg-emerald-600 text-white font-semibold text-xs hover:bg-emerald-700 transition';
@@ -304,23 +302,58 @@ function setPhase(p){
   saveBtn.classList.toggle('next-btn', p==='ended');
 }
 
-function endCall(){
-  if(!editArea.value.trim()){ showToast('文字起こしがありません', true); return; }
+/* ===== 電話終了 → 録音音声をAI解析 ===== */
+function parseSummary(text){
+  const lines=text.split('\n').map(function(l){ return l.replace(/^[・\-\*\s]+/,'').trim(); }).filter(Boolean);
+  return {
+    title: lines[0]||'', name: lines[1]||'', phone: lines[2]||'', code: lines[3]||'',
+    bullets: lines.slice(4),
+  };
+}
+function fallbackSummary(){
+  const t=transcriptText();
+  const first=(state.transcript[0]?state.transcript[0].text:'通話内容').slice(0,10);
+  const phone=(function(){ const m=t.replace(/[０-９]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);}).match(/0\d[\d\-\s]{7,12}\d/); return m?m[0].replace(/\s/g,''):'不明'; })();
+  const name=(function(){ const m=t.match(/([一-龥]{1,5})[ 　]?(?:と申します|と言います|といいます)/); return m?m[1]:'不明'; })();
+  const bullets=state.transcript.slice(0,6).map(function(x){ return '・'+x.text; }).join('\n');
+  return '・'+first+'\n・'+name+'\n・'+phone+'\n・不明\n'+(bullets||'・（内容なし）');
+}
+function showSummary(text, note){
+  state.summaryText=text;
+  state.parsed=parseSummary(text);
+  summaryOut.textContent=text+(note?'\n\n'+note:'');
+}
+async function endCall(){
+  if(!state.transcript.length && !state.chunks.length){ showToast('通話内容がありません', true); return; }
   state.capturing=false;
-  runExtraction();
-  const md=buildSummary();
-  summaryOut.dataset.md=md; summaryOut.innerHTML=renderMarkdown(md);
   setPhase('ended');
-  showToast('要約しました。内容を確認して「履歴保存」を押してください');
+  summaryOut.innerHTML='<span class="spinner"></span> <span class="text-indigo-600 font-semibold">AIが録音音声を解析しています…（通話の長さにより数十秒かかります）</span>';
+  try{
+    const blob=await stopRecorderAndGetBlob();
+    if(!blob) throw new Error('録音データなし');
+    if(blob.size > MAX_AUDIO_MB*1024*1024) throw new Error('録音が長すぎます('+Math.round(blob.size/1048576)+'MB)');
+    const b64=await blobToBase64(blob);
+    const res=await fetch(WEBAPP_URL,{method:'POST',body:JSON.stringify({action:'summarize', mimeType: blob.type||'audio/webm', audio:b64})});
+    const j=await res.json();
+    if(!(j&&j.ok&&j.text)) throw new Error(j&&j.error?j.error:'AI応答エラー');
+    showSummary(j.text.trim());
+    showToast('AI要約ができました。確認して「履歴保存」を押してください');
+  }catch(e){
+    console.warn('AI解析失敗→簡易要約に切替:', e);
+    showSummary(fallbackSummary(), '※AI解析に失敗したため、リアルタイム文字起こしからの簡易要約です（'+(e.message||e)+'）');
+    showToast('AI解析に失敗。簡易要約を表示しました', true);
+  }
 }
 
 function clearCall(){
   if(state.transcript.length && !confirm('クリアして新しい通話を始めますか？')) return;
   state.transcript=[]; state.callStartAt=null; state.lastRowUrl=''; state.capturing=true;
-  editArea.value='';
-  FIELDS.forEach(function(f){ const el=$(f.id); el.value=''; delete el.dataset.auto; });
-  summaryOut.dataset.md=''; summaryOut.innerHTML='<p class="text-slate-400">「電話終了（要約）」を押すと、ここに要約が出ます。</p>';
+  state.summaryText=''; state.parsed=null; state.energyL=0; state.energyR=0;
+  renderTranscript();
+  summaryOut.innerHTML='<span class="text-slate-400">「電話終了（AI要約）」を押すと、録音音声をAIが解析して タイトル・相手の名前・電話番号・工務店コード・要約 を箇条書きで表示します。</span>';
+  restartRecorder();
   setPhase('capturing');
+  if(!state.shouldListen) autoStart();
 }
 
 function guessCategory(t){
@@ -330,42 +363,21 @@ function guessCategory(t){
   if(/(要望|してほし|お願いしたい|希望|改善)/.test(t)) return '要望';
   return '質問';
 }
-function val(id){ return $(id).value.trim(); }
-function buildSummary(){
-  const body=editArea.value.split('\n').map(function(l){return l.trim();}).filter(Boolean);
-  const title=body[0]?body[0].slice(0,28):'通話内容';
-  const content=body.length?body.slice(0,10).map(function(l){return '・'+l;}).join('\n'):'・（内容なし）';
-  return '# '+title+'\n'+
-    '種別：'+guessCategory(editArea.value)+'\n'+
-    '会社名：'+(val('companyInput')||'—')+'\n'+
-    '氏名：'+(val('nameInput')||'—')+'\n'+
-    '電話番号：'+(val('phoneInput')||'—')+'\n'+
-    'アンサー番号：'+(val('answerInput')||'—')+'\n'+
-    '物件番号：'+(val('bukkenInput')||'—')+'\n'+
-    '住所：'+(val('addressInput')||'—')+'\n\n'+
-    '要件・伝達内容：\n'+content;
-}
-function renderMarkdown(md){
-  const esc=function(s){return s.replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});};
-  return md.split('\n').map(function(line){
-    line=line.replace(/\s+$/,'');
-    if(line==='') return '';
-    if(/^#\s+/.test(line)) return '<h1>'+esc(line.replace(/^#\s+/,''))+'</h1>';
-    return '<p>'+esc(line).replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')+'</p>';
-  }).join('');
-}
 
 function showToast(msg,isErr){ const t=$('toast'); t.textContent=msg; t.className='text-sm font-semibold self-center transition-opacity '+(isErr?'text-rose-600':'text-emerald-600'); t.style.opacity='1'; setTimeout(function(){t.style.opacity='0';},2600); }
 
 async function saveHistory(){
   const agent=agentSelect.value;
   if(!agent){ showToast('担当者を選択してください', true); return null; }
-  if(!editArea.value.trim()){ showToast('保存する内容がありません', true); return null; }
+  const trans=transcriptText();
+  if(!trans && !state.summaryText){ showToast('保存する内容がありません', true); return null; }
+  const p=state.parsed||{};
   const payload={
     datetime:(state.callStartAt||new Date()).toLocaleString('ja-JP'),
-    agent:agent, company:val('companyInput'), name:val('nameInput'), phone:val('phoneInput'),
-    answer:val('answerInput'), bukken:val('bukkenInput'), address:val('addressInput'),
-    category:guessCategory(editArea.value), summary:summaryOut.dataset.md||'', transcript:editArea.value.trim()
+    agent:agent, company:'', name:p.name&&p.name!=='不明'?p.name:'', phone:p.phone&&p.phone!=='不明'?p.phone:'',
+    answer:'', bukken:'', address:'',
+    category:guessCategory(trans+state.summaryText),
+    summary:state.summaryText||'', transcript:trans
   };
   showToast('保存中…');
   try{
@@ -377,26 +389,6 @@ async function saveHistory(){
 }
 
 async function clip(text){ try{ await navigator.clipboard.writeText(text); }catch(e){ const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); } }
-async function copyUrl(){
-  let url=state.lastRowUrl; if(!url) url=await saveHistory();
-  const md=summaryOut.dataset.md||'（要約は未生成）';
-  await clip(md+'\n\n---\n文字起こし（スプレッドシート）: '+(url||'（未取得）'));
-  showToast('要約＋URLをコピーしました');
-}
-function omType(cat){ return {'故障':'故障連絡','クレーム':'クレーム','質問':'質問','要望':'要望','見積':'見積依頼'}[cat]||'質問'; }
-function guessKubun(t){ if(/(工務店|建設|工業|ハウス|ホーム).{0,6}(から|より|の)/.test(t)) return '工務店から'; if(/業者/.test(t)) return '業者から'; return 'ユーザーから'; }
-async function copyForOMNavi(){
-  const cat=guessCategory(editArea.value);
-  const first=(editArea.value.split('\n').map(function(s){return s.trim();}).filter(Boolean)[0]||'').slice(0,60);
-  const data={
-    title:first, kubun:guessKubun(editArea.value), type:omType(cat),
-    reporter:val('nameInput'), tel:val('phoneInput'),
-    detail:(summaryOut.dataset.md?summaryOut.dataset.md+'\n\n':'')+editArea.value.trim(),
-    company:val('companyInput')
-  };
-  await clip('OMNAVI::'+JSON.stringify(data));
-  showToast('OMナビ用にコピーしました（転記ボタンで貼付）');
-}
 
 async function refreshMySheetLink(){
   const agent=agentSelect.value;
@@ -409,16 +401,15 @@ async function refreshMySheetLink(){
   }catch(e){ mySheetLink.classList.add('hidden'); }
 }
 
-document.querySelectorAll('.copyBtn').forEach(function(b){ b.addEventListener('click',async function(){ const el=$(b.dataset.copy); if(el&&el.value.trim()){ await clip(el.value.trim()); showToast('コピーしました'); } else showToast('コピーする内容がありません', true); }); });
+$('copyTranscriptBtn').addEventListener('click', async function(){ const t=transcriptText(); if(t){ await clip(t); showToast('全文をコピーしました'); } else showToast('コピーする内容がありません', true); });
+copySummaryBtn.addEventListener('click', async function(){ if(state.summaryText){ await clip(state.summaryText); showToast('要約をコピーしました'); } else showToast('要約がまだありません', true); });
 endCallBtn.addEventListener('click',endCall);
 saveBtn.addEventListener('click',saveHistory);
-copyBtn.addEventListener('click',copyUrl);
-omCopyBtn.addEventListener('click',copyForOMNavi);
 pauseBtn.addEventListener('click',togglePause);
 clearBtn.addEventListener('click',clearCall);
 overlayStartBtn.addEventListener('click',autoStart);
 $('refreshDevices').addEventListener('click',listDevices);
-deviceSelect.addEventListener('change',function(){ pauseCall(); try{ state.audioContext&&state.audioContext.close(); }catch(e){} state.audioContext=null; state.mediaStream=null; state.recognition=null; autoStart(); });
+deviceSelect.addEventListener('change',function(){ pauseCall(); try{ state.audioContext&&state.audioContext.close(); }catch(e){} state.audioContext=null; state.mediaStream=null; state.recognition=null; state.recorder=null; autoStart(); });
 navigator.mediaDevices.addEventListener?.('devicechange',listDevices);
 
 setStatus('idle'); listDevices(); refreshMySheetLink(); setPhase('capturing'); autoStart();
