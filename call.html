@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>通話 文字起こし・AI要約ツール</title>
+<title>通話 録音・AI要約ツール</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   :root { color-scheme: light; }
@@ -31,7 +31,7 @@
   </div>
 </div>
 
-<div class="max-w-5xl mx-auto p-3 sm:p-4">
+<div class="max-w-4xl mx-auto p-3 sm:p-4">
 
   <!-- 上段：担当者＋ステータス＋メーター -->
   <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3">
@@ -72,27 +72,15 @@
       <button id="refreshDevices" title="更新" class="px-3 py-2 border border-slate-300 rounded-lg hover:bg-slate-50">↻</button>
     </div>
 
-    <!-- モード案内(1chのとき表示) -->
-    <div id="monoNote" class="hidden text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-      🎙 PCマイク（1ch）を検出しました。周囲の会話を拾わないよう、電話を取ったら「▶ 通話開始」を押してください。押した時点の約20〜40秒前から録音されているので、第一声も残ります。
+    <!-- 通話状態バナー -->
+    <div id="callBanner" class="rounded-lg border px-4 py-3 text-sm font-semibold bg-slate-50 border-slate-200 text-slate-600">
+      電話を取ったら「▶ 通話開始」を押してください（押した時点の約20〜40秒前から録音されます）。
     </div>
 
-    <!-- リアルタイム文字起こし（LINE風チャット・閲覧専用） -->
-    <div>
-      <div class="flex items-center justify-between mb-1">
-        <label class="block text-xs font-semibold text-slate-500">リアルタイム文字起こし <span class="font-normal text-slate-400">（緑=自分、白=相手。配線により逆の場合あり）</span></label>
-        <button id="copyTranscriptBtn" class="text-xs text-emerald-700 hover:underline">📋 全文コピー</button>
-      </div>
-      <div id="chatArea" class="h-64 overflow-y-auto nice-scroll rounded-lg px-3 py-3 space-y-1.5" style="background:#8cabd8;">
-        <p id="chatEmpty" class="text-white/80 text-center mt-16 text-xs">通話が始まると、ここに会話がリアルタイムで表示されます。</p>
-      </div>
-    </div>
-
-    <!-- ボタン群（左=通話の流れ順、右=補助） -->
+    <!-- ボタン群 -->
     <div class="flex flex-wrap gap-2 items-center pt-1">
-      <button id="startCallBtn" class="hidden px-4 py-2.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 active:scale-95 transition">▶ 通話開始</button>
-      <button id="endCallBtn" class="px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 active:scale-95 transition">📞 電話終了（AI要約・次の通話へ）</button>
-      <button id="saveBtn" class="px-4 py-2.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 active:scale-95 transition">💾 履歴保存</button>
+      <button id="startCallBtn" class="px-5 py-3 rounded-lg bg-emerald-600 text-white font-bold text-base hover:bg-emerald-700 active:scale-95 transition">▶ 通話開始</button>
+      <button id="endCallBtn" class="px-5 py-3 rounded-lg bg-indigo-600 text-white font-bold text-base hover:bg-indigo-700 active:scale-95 transition">📞 電話終了</button>
       <button id="copySummaryBtn" class="px-4 py-2.5 rounded-lg bg-white border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 active:scale-95 transition">📋 要約コピー</button>
       <span class="flex-1"></span>
       <button id="pauseBtn" class="px-4 py-2.5 rounded-lg bg-rose-500 text-white font-semibold hover:bg-rose-600 active:scale-95 transition">⏸ 一時停止</button>
@@ -102,8 +90,8 @@
 
     <!-- AI要約結果 -->
     <div>
-      <label class="block text-xs font-semibold text-slate-500 mb-1">AI要約（直前の通話の録音音声を解析）</label>
-      <div id="summaryOut" class="min-h-[110px] whitespace-pre-wrap leading-relaxed border border-slate-200 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700"><span class="text-slate-400">「電話終了」を押すと録音音声をAIが解析し、タイトル・相手の名前・電話番号・工務店コード・要約 を箇条書きで表示します。次の通話の待機は自動で始まります。</span></div>
+      <label class="block text-xs font-semibold text-slate-500 mb-1">AI要約（電話終了で自動解析 → 自動で履歴保存）</label>
+      <div id="summaryOut" class="min-h-[110px] whitespace-pre-wrap leading-relaxed border border-slate-200 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700"><span class="text-slate-400">「電話終了」を押すと録音音声をAIが解析し、タイトル・相手の名前・電話番号・工務店コード・要約 を箇条書きで表示し、履歴（スプレッドシート）にも自動保存します。</span></div>
     </div>
 
     <!-- 録音一覧（1週間保存） -->
@@ -123,34 +111,34 @@ const AGENTS = ['石田','戸塚','根木','水野','村松','藤森','河西','
 const MAX_AUDIO_MB = 14;               // これを超える録音はAI解析せずフォールバック(Gemini/GASの受信上限対策。32kbpsで約1時間分)
 const REC_KEEP_MS = 7*24*60*60*1000;   // 録音の保存期間: 1週間
 const PREROLL_MS = 20000;              // さかのぼり録音の入替間隔(実際のさかのぼりは20〜40秒)
-const R_VOICE_THRESHOLD = 0.04;        // 2ch時: 相手チャンネルの声とみなす音量
-const PENDING_KEEP_MS = 30000;         // 通話開始前に保持する直近の文字起こし
 
 const state = {
   audioContext:null, mediaStream:null, source:null, splitter:null,
   analyserL:null, analyserR:null, recognition:null,
   shouldListen:false, recognitionRunning:false, rafId:null,
-  mode:null,              // 'stereo'(USBアダプタ) | 'mono'(PCマイク)
-  callActive:false,       // 通話中か(録音確定・文字起こし記録中)
-  transcript:[], pendingBuffer:[], callStartAt:null, lastRowUrl:'',
+  callActive:false,
+  transcript:[], callStartAt:null, lastRowUrl:'',
   segs:[], activeSeg:null, rollTimer:null,   // さかのぼり録音(2本交互)
-  summaryText:'', parsed:null, lastCall:null,
-  energyL:0, energyR:0, rDetect:0,
+  summaryText:'', parsed:null, lastCall:null, pendingSave:false,
+  energyL:0, energyR:0, timerId:null,
 };
 const $ = (id) => document.getElementById(id);
 
-const deviceSelect=$('deviceSelect'), startCallBtn=$('startCallBtn'), endCallBtn=$('endCallBtn'), saveBtn=$('saveBtn'),
+const deviceSelect=$('deviceSelect'), startCallBtn=$('startCallBtn'), endCallBtn=$('endCallBtn'),
   copySummaryBtn=$('copySummaryBtn'), pauseBtn=$('pauseBtn'), clearBtn=$('clearBtn'),
   agentSelect=$('agentSelect'), mySheetLink=$('mySheetLink'),
   startOverlay=$('startOverlay'), overlayStartBtn=$('overlayStartBtn'), overlayError=$('overlayError'),
   statusText=$('statusText'), statusPill=$('statusPill'),
   levelL=$('levelL'), levelR=$('levelR'), levelLText=$('levelLText'), levelRText=$('levelRText'),
-  chatArea=$('chatArea'), summaryOut=$('summaryOut'), recList=$('recList'), monoNote=$('monoNote');
+  summaryOut=$('summaryOut'), recList=$('recList'), callBanner=$('callBanner');
 
 /* ===== 担当者プルダウン ===== */
 AGENTS.forEach(n => { const o=document.createElement('option'); o.value=n; o.textContent=n; agentSelect.appendChild(o); });
 agentSelect.value = localStorage.getItem('agentName') || '';
-agentSelect.addEventListener('change', () => { localStorage.setItem('agentName', agentSelect.value); refreshMySheetLink(); });
+agentSelect.addEventListener('change', () => {
+  localStorage.setItem('agentName', agentSelect.value); refreshMySheetLink();
+  if(state.pendingSave && agentSelect.value){ state.pendingSave=false; saveHistory(); }
+});
 
 async function listDevices(){
   try{
@@ -178,11 +166,19 @@ function updateChannelInfo(ch){
   else if(ch===1){ el.textContent='入力：1ch(PCマイク)'; el.className='text-xs font-semibold text-amber-600'; }
   else el.textContent='';
 }
-function updateModeUI(){
-  const mono = state.mode==='mono';
-  monoNote.classList.toggle('hidden', !mono || state.callActive);
-  startCallBtn.classList.toggle('hidden', !mono || state.callActive);
-  startCallBtn.classList.toggle('next-btn', mono && !state.callActive);
+function fmtElapsed(ms){ const s=Math.floor(ms/1000); return Math.floor(s/60)+':' + ('0'+s%60).slice(-2); }
+function updateBanner(){
+  if(state.callActive){
+    const el=fmtElapsed(Date.now()-state.callStartAt.getTime());
+    callBanner.className='rounded-lg border px-4 py-3 text-sm font-semibold bg-red-50 border-red-200 text-red-600';
+    callBanner.innerHTML='🔴 通話中 '+el+'（録音しています。終わったら「📞 電話終了」）';
+  } else {
+    callBanner.className='rounded-lg border px-4 py-3 text-sm font-semibold bg-slate-50 border-slate-200 text-slate-600';
+    callBanner.textContent='電話を取ったら「▶ 通話開始」を押してください（押した時点の約20〜40秒前から録音されます）。';
+  }
+  startCallBtn.classList.toggle('hidden', state.callActive);
+  startCallBtn.classList.toggle('next-btn', !state.callActive && state.shouldListen);
+  endCallBtn.classList.toggle('hidden', !state.callActive);
   endCallBtn.classList.toggle('next-btn', state.callActive);
 }
 
@@ -194,18 +190,16 @@ async function buildAudioGraph(deviceId){
   if(state.audioContext.state==='suspended') await state.audioContext.resume();
   state.source=state.audioContext.createMediaStreamSource(state.mediaStream);
   const ch=state.mediaStream.getAudioTracks()[0].getSettings().channelCount; updateChannelInfo(ch);
-  state.mode = (ch>=2) ? 'stereo' : 'mono';
   state.splitter=state.audioContext.createChannelSplitter(2); state.source.connect(state.splitter);
   state.analyserL=state.audioContext.createAnalyser(); state.analyserR=state.audioContext.createAnalyser();
   state.analyserL.fftSize=1024; state.analyserR.fftSize=1024;
   state.splitter.connect(state.analyserL,0); state.splitter.connect(state.analyserR,1);
   startRolling();
-  updateModeUI();
 }
 
 /* ===== さかのぼり録音(2本を20秒ずらしで交互に回す) =====
    ブラウザの録音は途中を切り出せないため、常に「20〜40秒前から録れている1本」を確保する。
-   通話開始時に古い方をそのまま続行 → 開始の20〜40秒前からが1本のファイルになる。 */
+   通話開始ボタンで古い方をそのまま続行 → 開始の20〜40秒前からが1本のファイルになる。 */
 function newSeg(){
   if(!window.MediaRecorder || !state.mediaStream) return null;
   try{
@@ -355,110 +349,70 @@ function meterLoop(){
   if(!state.analyserL) return;
   const l=rms(state.analyserL), r=rms(state.analyserR);
   state.energyL+=l; state.energyR+=r;
-  // 2ch: 相手チャンネルに声が来たら通話開始とみなす
-  if(state.mode==='stereo' && !state.callActive && state.shouldListen){
-    if(r>R_VOICE_THRESHOLD){ state.rDetect++; if(state.rDetect>=5) activateCall(); }
-    else state.rDetect=0;
-  }
   levelL.style.width=Math.min(100,Math.round(l*280))+'%'; levelR.style.width=Math.min(100,Math.round(r*280))+'%';
   levelLText.textContent=Math.min(100,Math.round(l*280))+'%'; levelRText.textContent=Math.min(100,Math.round(r*280))+'%';
   state.rafId=requestAnimationFrame(meterLoop);
 }
 function stopMeters(){ if(state.rafId) cancelAnimationFrame(state.rafId); state.rafId=null; levelL.style.width='0%'; levelR.style.width='0%'; levelLText.textContent='0%'; levelRText.textContent='0%'; }
 
-/* ===== リアルタイム文字起こし ===== */
+/* ===== 文字起こし(裏方: 画面表示なし。AI失敗時の簡易要約とシート保存用) ===== */
 function initRecognition(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){ alert('Chrome / Edge をお使いください（Web Speech API 未対応）。'); return null; }
-  const rec=new SR(); rec.lang='ja-JP'; rec.continuous=true; rec.interimResults=true; rec.maxAlternatives=1;
+  if(!SR) return null;   // 未対応でも録音・AI要約は動く
+  const rec=new SR(); rec.lang='ja-JP'; rec.continuous=true; rec.interimResults=false; rec.maxAlternatives=1;
   rec.onstart=function(){ state.recognitionRunning=true; };
   rec.onresult=function(e){
-    let interim='';
     for(let i=e.resultIndex;i<e.results.length;i++){
-      const res=e.results[i]; const txt=res[0].transcript;
-      if(res.isFinal) commitFinal(txt.trim()); else interim+=txt;
+      const res=e.results[i];
+      if(res.isFinal) commitFinal(res[0].transcript.trim());
     }
-    if(interim && state.callActive) renderTranscript(interim);
   };
   rec.onerror=function(e){
-    if(e.error==='not-allowed'||e.error==='service-not-allowed'){ setStatus('error'); state.shouldListen=false; alert('マイクが許可されていません。'); }
+    if(e.error==='not-allowed'||e.error==='service-not-allowed'){ state.shouldListen=false; }
     else console.warn('recognition error（自動回復）:', e.error);
   };
   rec.onend=function(){ state.recognitionRunning=false; if(recognitionWanted()) setTimeout(safeStartRecognition,250); };
   return rec;
 }
-/* 1ch(PCマイク)では通話中だけ文字起こしする(周囲の雑談を拾わないため)。2chは常時 */
-function recognitionWanted(){ return state.shouldListen && (state.mode!=='mono' || state.callActive); }
+/* 文字起こしは通話中だけ動かす(周囲の雑談を拾わないため) */
+function recognitionWanted(){ return state.shouldListen && state.callActive; }
 function safeStartRecognition(){ if(!state.recognition||state.recognitionRunning||!recognitionWanted()) return; try{ state.recognition.start(); }catch(e){} }
 function stopRecognition(){ if(state.recognition){ try{ state.recognition.stop(); }catch(e){} } }
-
-function nowLabel(){ return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}); }
 function currentSide(){
   const l=state.energyL, r=state.energyR;
   if(l+r<0.01) return 'R';
   return (l>r*1.3) ? 'L' : 'R';
 }
-/* LINE風バブル: 自分=右・緑、相手=左・白 */
-function bubbleHtml(t, interim){
-  const escH=function(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});};
-  const op=interim?' opacity-70':'';
-  if(t.side==='L'){
-    return '<div class="flex justify-end items-end gap-1'+op+'">'+
-      '<span class="text-[10px] text-white/80 mb-0.5">'+(t.ts||'')+'</span>'+
-      '<div class="max-w-[75%] rounded-2xl rounded-br-md px-3 py-1.5 text-sm leading-relaxed shadow-sm" style="background:#8de055;">'+escH(t.text)+'</div></div>';
-  }
-  return '<div class="flex justify-start items-end gap-1'+op+'">'+
-    '<div class="max-w-[75%] rounded-2xl rounded-bl-md px-3 py-1.5 text-sm leading-relaxed bg-white shadow-sm">'+escH(t.text)+'</div>'+
-    '<span class="text-[10px] text-white/80 mb-0.5">'+(t.ts||'')+'</span></div>';
-}
-function renderTranscript(interim){
-  let html=state.transcript.map(function(t){ return bubbleHtml(t,false); }).join('');
-  if(interim) html+=bubbleHtml({text:interim, side:currentSide(), ts:''}, true);
-  chatArea.innerHTML=html||'<p class="text-white/80 text-center mt-16 text-xs">通話が始まると、ここに会話がリアルタイムで表示されます。</p>';
-  chatArea.scrollTop=chatArea.scrollHeight;
-}
 function commitFinal(text){
-  if(!text) return;
-  const entry={text:text, ts:nowLabel(), side:currentSide(), at:Date.now()};
+  if(!text || !state.callActive) return;
+  state.transcript.push({text:text, side:currentSide()});
   state.energyL=0; state.energyR=0;
-  if(!state.callActive){
-    // 通話前の発話(挨拶など)は直近30秒だけ保持し、通話開始時に取り込む。それ以前の雑談は破棄
-    state.pendingBuffer.push(entry);
-    state.pendingBuffer=state.pendingBuffer.filter(function(x){ return Date.now()-x.at<PENDING_KEEP_MS; });
-    return;
-  }
-  state.transcript.push(entry);
-  renderTranscript();
 }
 function transcriptText(list){
   return (list||state.transcript).map(function(t){ return (t.side==='L'?'自分: ':'相手: ')+t.text; }).join('\n');
 }
 
-/* ===== 通話開始(2ch=自動検知 / 1ch=ボタン) ===== */
+/* ===== 通話開始(ボタン) ===== */
 function activateCall(){
   if(state.callActive) return;
+  if(!state.mediaStream){ showToast('マイク準備中です。少し待ってからもう一度押してください', true); autoStart(); return; }
   state.callActive=true;
   state.callStartAt=new Date();
-  state.rDetect=0;
+  state.transcript=[];
   adoptOldestSeg();   // 20〜40秒前からの録音を続行
-  // 直近30秒の発話(第一声など)をチャットに取り込む
-  const cutoff=Date.now()-PENDING_KEEP_MS;
-  state.transcript=state.pendingBuffer.filter(function(x){ return x.at>=cutoff; });
-  state.pendingBuffer=[];
-  renderTranscript();
+  state.recognition=state.recognition||initRecognition();
   safeStartRecognition();
-  refreshStatus(); updateModeUI();
-  showToast('通話の記録を開始しました');
+  if(state.timerId) clearInterval(state.timerId);
+  state.timerId=setInterval(updateBanner, 1000);
+  refreshStatus(); updateBanner();
 }
 
 async function startListening(){
   if(!state.audioContext){ await buildAudioGraph(deviceSelect.value); }
   else if(state.audioContext.state==='suspended') await state.audioContext.resume();
-  state.recognition=state.recognition||initRecognition();
-  if(!state.recognition) throw new Error('認識初期化失敗');
-  state.shouldListen=true; safeStartRecognition(); meterLoop();
+  state.shouldListen=true; meterLoop();
   if(!state.callActive && !state.rollTimer) startRolling();
-  refreshStatus(); updateModeUI();
+  refreshStatus(); updateBanner();
   pauseBtn.textContent='⏸ 一時停止'; pauseBtn.className='px-4 py-2.5 rounded-lg bg-rose-500 text-white font-semibold hover:bg-rose-600 active:scale-95 transition';
 }
 function pauseCall(){
@@ -468,7 +422,7 @@ function pauseCall(){
   if(state.activeSeg){ try{ if(state.activeSeg.rec.state==='recording') state.activeSeg.rec.pause(); }catch(e){} }
   if(state.rollTimer){ clearInterval(state.rollTimer); state.rollTimer=null; }
   if(state.audioContext && state.audioContext.state==='running') state.audioContext.suspend();
-  stopMeters(); setStatus('paused');
+  stopMeters(); setStatus('paused'); updateBanner();
   pauseBtn.textContent='▶ 待機再開'; pauseBtn.className='px-4 py-2.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 active:scale-95 transition';
 }
 function resumeAll(){
@@ -483,7 +437,7 @@ async function autoStart(){
   catch(e){ const denied=e&&(e.name==='NotAllowedError'||e.name==='SecurityError'); showOverlay(denied?'マイクがブロックされています。アドレスバーの🔒から許可してください。':''); setStatus('error'); }
 }
 
-/* ===== 電話終了 = 直前通話のAI解析 + すぐ次の通話待機 ===== */
+/* ===== 電話終了 = 録音確定→AI解析→自動履歴保存、待機へ戻る ===== */
 function parseSummary(text){
   const lines=text.split('\n').map(function(l){ return l.replace(/^[・\-\*\s]+/,'').trim(); }).filter(Boolean);
   return { title: lines[0]||'', name: lines[1]||'', phone: lines[2]||'', code: lines[3]||'', bullets: lines.slice(4) };
@@ -500,22 +454,19 @@ function showSummary(text, note){
   state.summaryText=text;
   state.parsed=parseSummary(text);
   summaryOut.textContent=text+(note?'\n\n'+note:'');
-  saveBtn.classList.add('next-btn');
 }
 async function endCall(){
-  if(!state.callActive && !state.transcript.length){ showToast('通話中ではありません', true); return; }
-  // 直前通話をスナップショットし、すぐ次の通話待機(さかのぼり録音)に戻る
+  if(!state.callActive){ showToast('通話中ではありません', true); return; }
   const snapshot={ transcript:state.transcript.slice(), startAt:state.callStartAt||new Date() };
   state.lastCall=snapshot;
   const blob=await stopActiveAndGetBlob();
   state.callActive=false;
-  state.transcript=[]; state.pendingBuffer=[]; state.callStartAt=null;
-  state.energyL=0; state.energyR=0; state.rDetect=0;
-  renderTranscript();
+  state.transcript=[]; state.callStartAt=null;
+  state.energyL=0; state.energyR=0;
+  if(state.timerId){ clearInterval(state.timerId); state.timerId=null; }
+  stopRecognition();
   startRolling();
-  if(state.mode==='mono') stopRecognition();  // 1chは次の「通話開始」まで文字起こし停止
-  if(!state.shouldListen) autoStart(); else { refreshStatus(); updateModeUI(); }
-  showToast('次の通話の待機に戻りました');
+  refreshStatus(); updateBanner();
 
   if(blob) saveRecording(blob);  // 1週間保存
 
@@ -528,26 +479,24 @@ async function endCall(){
     const j=await res.json();
     if(!(j&&j.ok&&j.text)) throw new Error(j&&j.error?j.error:'AI応答エラー');
     showSummary(j.text.trim());
-    showToast('AI要約ができました。確認して「履歴保存」を押してください');
   }catch(e){
     console.warn('AI解析失敗→簡易要約に切替:', e);
-    showSummary(fallbackSummary(snapshot.transcript), '※AI解析に失敗したため、リアルタイム文字起こしからの簡易要約です（'+(e.message||e)+'）');
-    showToast('AI解析に失敗。簡易要約を表示しました', true);
+    showSummary(fallbackSummary(snapshot.transcript), '※AI解析に失敗したため、簡易要約です（'+(e.message||e)+'）');
   }
+  await saveHistory();   // 要約完了と同時に自動で履歴保存
 }
 
 function clearCall(){
   state.callActive=false;
-  state.transcript=[]; state.pendingBuffer=[]; state.callStartAt=null; state.lastRowUrl='';
-  state.summaryText=''; state.parsed=null; state.lastCall=null;
-  state.energyL=0; state.energyR=0; state.rDetect=0;
+  state.transcript=[]; state.callStartAt=null; state.lastRowUrl='';
+  state.summaryText=''; state.parsed=null; state.lastCall=null; state.pendingSave=false;
+  state.energyL=0; state.energyR=0;
+  if(state.timerId){ clearInterval(state.timerId); state.timerId=null; }
   if(state.activeSeg){ discardSeg(state.activeSeg); state.activeSeg=null; }
-  renderTranscript();
-  summaryOut.innerHTML='<span class="text-slate-400">「電話終了」を押すと録音音声をAIが解析し、タイトル・相手の名前・電話番号・工務店コード・要約 を箇条書きで表示します。次の通話の待機は自動で始まります。</span>';
-  saveBtn.classList.remove('next-btn');
+  stopRecognition();
+  summaryOut.innerHTML='<span class="text-slate-400">「電話終了」を押すと録音音声をAIが解析し、タイトル・相手の名前・電話番号・工務店コード・要約 を箇条書きで表示し、履歴（スプレッドシート）にも自動保存します。</span>';
   startRolling();
-  if(state.mode==='mono') stopRecognition();
-  if(!state.shouldListen) autoStart(); else { refreshStatus(); updateModeUI(); }
+  refreshStatus(); updateBanner();
 }
 
 function guessCategory(t){
@@ -562,7 +511,7 @@ function showToast(msg,isErr){ const t=$('toast'); t.textContent=msg; t.classNam
 
 async function saveHistory(){
   const agent=agentSelect.value;
-  if(!agent){ showToast('担当者を選択してください', true); return null; }
+  if(!agent){ state.pendingSave=true; showToast('担当者を選択すると自動で履歴保存されます', true); return null; }
   const call=state.lastCall||{ transcript:state.transcript, startAt:state.callStartAt };
   const trans=transcriptText(call.transcript);
   if(!trans && !state.summaryText){ showToast('保存する内容がありません', true); return null; }
@@ -574,13 +523,12 @@ async function saveHistory(){
     category:guessCategory(trans+state.summaryText),
     summary:state.summaryText||'', transcript:trans
   };
-  showToast('保存中…');
   try{
     const res=await fetch(WEBAPP_URL,{method:'POST',body:JSON.stringify(payload)});
     const j=await res.json();
-    if(j&&j.ok&&j.url){ state.lastRowUrl=j.url; saveBtn.classList.remove('next-btn'); showToast('履歴を保存しました'); return j.url; }
+    if(j&&j.ok&&j.url){ state.lastRowUrl=j.url; showToast('要約と履歴保存が完了しました'); return j.url; }
     showToast('保存はできましたが行URL取得に失敗', true); return null;
-  }catch(e){ console.error(e); showToast('保存に失敗（デプロイのアクセス権を確認）', true); return null; }
+  }catch(e){ console.error(e); showToast('履歴保存に失敗（デプロイのアクセス権を確認）', true); return null; }
 }
 
 async function clip(text){ try{ await navigator.clipboard.writeText(text); }catch(e){ const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); } }
@@ -596,19 +544,17 @@ async function refreshMySheetLink(){
   }catch(e){ mySheetLink.classList.add('hidden'); }
 }
 
-$('copyTranscriptBtn').addEventListener('click', async function(){ const t=transcriptText((state.lastCall&&!state.transcript.length)?state.lastCall.transcript:state.transcript); if(t){ await clip(t); showToast('全文をコピーしました'); } else showToast('コピーする内容がありません', true); });
 copySummaryBtn.addEventListener('click', async function(){ if(state.summaryText){ await clip(state.summaryText); showToast('要約をコピーしました'); } else showToast('要約がまだありません', true); });
 startCallBtn.addEventListener('click', activateCall);
 endCallBtn.addEventListener('click',endCall);
-saveBtn.addEventListener('click',saveHistory);
 pauseBtn.addEventListener('click',togglePause);
 clearBtn.addEventListener('click',clearCall);
 overlayStartBtn.addEventListener('click',autoStart);
 $('refreshDevices').addEventListener('click',listDevices);
-deviceSelect.addEventListener('change',function(){ pauseCall(); stopRolling(); if(state.activeSeg){ discardSeg(state.activeSeg); state.activeSeg=null; } try{ state.audioContext&&state.audioContext.close(); }catch(e){} state.audioContext=null; state.mediaStream=null; state.recognition=null; state.mode=null; state.callActive=false; autoStart(); });
+deviceSelect.addEventListener('change',function(){ pauseCall(); stopRolling(); if(state.activeSeg){ discardSeg(state.activeSeg); state.activeSeg=null; } try{ state.audioContext&&state.audioContext.close(); }catch(e){} state.audioContext=null; state.mediaStream=null; state.recognition=null; state.callActive=false; autoStart(); });
 navigator.mediaDevices.addEventListener?.('devicechange',listDevices);
 
-setStatus('idle'); listDevices(); refreshMySheetLink(); autoStart();
+setStatus('idle'); listDevices(); refreshMySheetLink(); updateBanner(); autoStart();
 purgeOldRecordings().then(renderRecList);
 </script>
 </body>
