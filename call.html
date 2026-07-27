@@ -89,7 +89,7 @@
 
     <!-- 録音一覧（1週間保存。要約・文字起こしもここに表示） -->
     <div>
-      <label class="block text-xs font-semibold text-slate-500 mb-1">🎧 録音データ（クリックで要約・文字起こしを表示 ／ このパソコン内に1週間保存 → 自動削除）</label>
+      <label class="block text-sm font-semibold text-slate-600 mb-2">🎧 録音データ（クリックで要約・文字起こしを表示 ／ このパソコン内に1週間保存 → 自動削除）</label>
       <div id="aiStatus" class="hidden mb-1 text-sm font-semibold text-indigo-600"><span class="spinner"></span> AIが録音音声を解析しています…（通話の長さにより数十秒かかります）</div>
       <div id="recList" class="space-y-1"></div>
     </div>
@@ -227,7 +227,8 @@ function adoptOldestSeg(){
 function stopActiveAndGetBlob(){
   return new Promise(function(resolve){
     const seg=state.activeSeg; state.activeSeg=null;
-    if(!seg){ resolve(null); return; }
+    if(!seg){ state.lastDurationMs=0; resolve(null); return; }
+    state.lastDurationMs=Date.now()-seg.startedAt;   // 録音の長さ(さかのぼり分を含む)
     const done=function(){ resolve(seg.chunks.length?new Blob(seg.chunks,{type:'audio/webm'}):null); };
     if(!seg.rec || seg.rec.state==='inactive'){ done(); return; }
     seg.rec.onstop=done;
@@ -258,7 +259,7 @@ async function saveRecording(blob){
     const db=await openRecDb();
     id=await new Promise(function(resolve,reject){
       const tx=db.transaction('recs','readwrite');
-      const req=tx.objectStore('recs').add({at:Date.now(), size:blob.size, blob:blob, summary:'', transcript:''});
+      const req=tx.objectStore('recs').add({at:Date.now(), size:blob.size, dur:state.lastDurationMs||0, blob:blob, summary:'', transcript:''});
       req.onsuccess=function(){ resolve(req.result); };
       tx.onerror=function(){ reject(tx.error); };
     });
@@ -305,7 +306,7 @@ function listRecordings(){
       const tx=db.transaction('recs','readonly');
       tx.objectStore('recs').openCursor().onsuccess=function(e){
         const cur=e.target.result;
-        if(cur){ out.push({id:cur.key, at:cur.value.at, size:cur.value.size, blob:cur.value.blob, summary:cur.value.summary||'', transcript:cur.value.transcript||'', url:cur.value.url||''}); cur.continue(); }
+        if(cur){ out.push({id:cur.key, at:cur.value.at, size:cur.value.size, dur:cur.value.dur||0, blob:cur.value.blob, summary:cur.value.summary||'', transcript:cur.value.transcript||'', url:cur.value.url||''}); cur.continue(); }
         else resolve(out);
       };
       tx.onerror=function(){ resolve(out); };
@@ -324,27 +325,28 @@ async function deleteRecording(id){
   renderRecList();
 }
 function fmtDate(ms){ return new Date(ms).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
-function fmtSize(b){ return b>1048576 ? (b/1048576).toFixed(1)+'MB' : Math.max(1,Math.round(b/1024))+'KB'; }
+function fmtDur(ms){ if(!ms) return '—'; const s=Math.round(ms/1000); return Math.floor(s/60)+'分'+('0'+s%60).slice(-2)+'秒'; }
 async function renderRecList(){
   const recs=(await listRecordings()).sort(function(a,b){ return b.at-a.at; });
-  if(!recs.length){ recList.innerHTML='<p class="text-xs text-slate-400">録音はまだありません。「電話終了」ごとにここへ保存されます。</p>'; return; }
+  if(!recs.length){ recList.innerHTML='<p class="text-sm text-slate-400">録音はまだありません。「電話終了」ごとにここへ保存されます。</p>'; return; }
+  const btn='px-3 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-sm font-semibold';
   recList.innerHTML=recs.map(function(r){
     const escH=function(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});};
     const title=(r.summary||'').split('\n')[0].replace(/^[・\s]+/,'');
-    return '<div class="border border-slate-200 rounded-lg bg-slate-50 text-xs" data-rec="'+r.id+'">'+
-      '<div class="flex items-center gap-3 px-3 py-1.5 cursor-pointer hover:bg-slate-100 rounded-lg" data-toggle="'+r.id+'" title="クリックで要約・文字起こしを表示/非表示">'+
-        '<span class="font-semibold text-slate-600">'+fmtDate(r.at)+'</span>'+
-        '<span class="text-slate-400">'+fmtSize(r.size)+'</span>'+
-        (title?'<span class="text-slate-500 truncate max-w-[240px]">'+escH(title)+'</span>':'')+
+    return '<div class="border border-slate-200 rounded-lg bg-slate-50 text-sm" data-rec="'+r.id+'">'+
+      '<div class="flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-slate-100 rounded-lg" data-toggle="'+r.id+'" title="クリックで要約・文字起こしを表示/非表示">'+
+        '<span class="font-semibold text-slate-700 whitespace-nowrap">'+fmtDate(r.at)+'</span>'+
+        '<span class="text-slate-500 whitespace-nowrap">'+fmtDur(r.dur)+'</span>'+
+        (title?'<span class="text-slate-700 font-semibold truncate">'+escH(title)+'</span>':'')+
         '<span class="flex-1"></span>'+
-        '<button data-copy="'+r.id+'" class="px-2 py-1 rounded bg-white border border-slate-300 hover:bg-slate-100">📋 要約コピー</button>'+
-        '<button data-play="'+r.id+'" class="px-2 py-1 rounded bg-white border border-slate-300 hover:bg-slate-100">▶ 再生</button>'+
-        '<button data-dl="'+r.id+'" class="px-2 py-1 rounded bg-white border border-slate-300 hover:bg-slate-100">⬇ 保存</button>'+
-        '<button data-del="'+r.id+'" class="px-2 py-1 rounded bg-white border border-slate-300 text-rose-500 hover:bg-rose-50">✕ 削除</button>'+
+        '<button data-copy="'+r.id+'" class="'+btn+'">📋 テキストコピー</button>'+
+        '<button data-play="'+r.id+'" class="'+btn+'">▶ 再生</button>'+
+        '<button data-dl="'+r.id+'" class="'+btn+'">🎵 音声保存</button>'+
+        '<button data-del="'+r.id+'" class="px-3 py-2 rounded-lg bg-white border border-slate-300 text-rose-500 hover:bg-rose-50 text-base" title="削除">🗑</button>'+
       '</div>'+
-      '<div class="hidden border-t border-slate-200 px-3 py-2 space-y-2" data-detail="'+r.id+'">'+
-        '<div><div class="font-semibold text-slate-500 mb-0.5">要約</div><div class="whitespace-pre-wrap leading-relaxed text-slate-600">'+(r.summary?escH(r.summary):'（要約なし）')+'</div></div>'+
-        '<div><div class="font-semibold text-slate-500 mb-0.5">文字起こし</div><div class="whitespace-pre-wrap leading-relaxed text-slate-600 max-h-40 overflow-y-auto nice-scroll">'+(r.transcript?escH(r.transcript):'（文字起こしなし）')+'</div></div>'+
+      '<div class="hidden border-t border-slate-200 px-4 py-3 space-y-3" data-detail="'+r.id+'">'+
+        '<div><div class="font-semibold text-slate-500 mb-1 text-xs">要約</div><div class="whitespace-pre-wrap leading-relaxed text-slate-700">'+(r.summary?escH(r.summary):'（要約なし）')+'</div></div>'+
+        '<div><div class="font-semibold text-slate-500 mb-1 text-xs">文字起こし</div><div class="whitespace-pre-wrap leading-relaxed text-slate-600 max-h-56 overflow-y-auto nice-scroll">'+(r.transcript?escH(r.transcript):'（文字起こしなし）')+'</div></div>'+
       '</div>'+
       '</div>';
   }).join('');
@@ -365,7 +367,7 @@ recList.addEventListener('click', async function(ev){
     const r=recs.find(function(x){ return x.id==b.dataset.copy; });
     if(!r||!r.summary){ showToast('この録音には要約がありません', true); return; }
     await clip(buildCopyText(r));
-    showToast('要約をコピーしました');
+    showToast('テキストをコピーしました');
   } else if(b.dataset.play){
     const r=recs.find(function(x){ return x.id==b.dataset.play; }); if(!r) return;
     const row=b.closest('[data-rec]');
@@ -493,10 +495,13 @@ function showSummary(text, transcript){
   state.transcriptAI=transcript||'';
   state.parsed=parseSummary(text);
 }
-/* AI応答を「要約」と「文字起こし全文」に分割(区切り行 ===) */
+/* AI応答を「要約」と「文字起こし全文」に分割(区切り行 ===)。見出し行(【…】)が混ざったら除去 */
+function stripHeadings(s){
+  return s.split('\n').filter(function(l){ return !/^\s*[【\[]?(前半|後半|区切り)?\s*[:：]?\s*(要約|文字起こし)\s*[】\]]?\s*$/.test(l) && !/^\s*【.*】\s*$/.test(l); }).join('\n').trim();
+}
 function splitAiResponse(text){
   const m=text.split(/\n\s*={3,}\s*\n/);
-  return { summary:(m[0]||'').trim(), transcript:(m[1]||'').trim() };
+  return { summary:stripHeadings(m[0]||''), transcript:stripHeadings(m[1]||'') };
 }
 async function endCall(){
   if(!state.callActive){ showToast('通話中ではありません', true); return; }
