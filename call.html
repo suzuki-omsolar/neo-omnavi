@@ -94,6 +94,12 @@
       <div id="summaryOut" class="min-h-[110px] whitespace-pre-wrap leading-relaxed border border-slate-200 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700"><span class="text-slate-400">「電話終了」を押すと録音音声をAIが解析し、タイトル・相手の名前・電話番号・工務店コード・要約 を箇条書きで表示し、履歴（スプレッドシート）にも自動保存します。</span></div>
     </div>
 
+    <!-- 文字起こし全文（録音音声から） -->
+    <div>
+      <label class="block text-xs font-semibold text-slate-500 mb-1">文字起こし（録音音声からAIが作成 → シートにもこの内容を保存）</label>
+      <div id="transcriptOut" class="max-h-52 overflow-y-auto nice-scroll whitespace-pre-wrap leading-relaxed border border-slate-200 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600"><span class="text-slate-400">電話終了後、ここに通話全文が表示されます。</span></div>
+    </div>
+
     <!-- 録音一覧（1週間保存） -->
     <div>
       <label class="block text-xs font-semibold text-slate-500 mb-1">🎧 録音データ（このパソコン内に1週間保存 → 自動削除）</label>
@@ -119,7 +125,7 @@ const state = {
   callActive:false,
   transcript:[], callStartAt:null, lastRowUrl:'',
   segs:[], activeSeg:null, rollTimer:null,   // さかのぼり録音(2本交互)
-  summaryText:'', parsed:null, lastCall:null, pendingSave:false,
+  summaryText:'', transcriptAI:'', parsed:null, lastCall:null, pendingSave:false,
   energyL:0, energyR:0, timerId:null,
 };
 const $ = (id) => document.getElementById(id);
@@ -130,7 +136,7 @@ const deviceSelect=$('deviceSelect'), startCallBtn=$('startCallBtn'), endCallBtn
   startOverlay=$('startOverlay'), overlayStartBtn=$('overlayStartBtn'), overlayError=$('overlayError'),
   statusText=$('statusText'), statusPill=$('statusPill'),
   levelL=$('levelL'), levelR=$('levelR'), levelLText=$('levelLText'), levelRText=$('levelRText'),
-  summaryOut=$('summaryOut'), recList=$('recList'), callBanner=$('callBanner');
+  summaryOut=$('summaryOut'), transcriptOut=$('transcriptOut'), recList=$('recList'), callBanner=$('callBanner');
 
 /* ===== 担当者プルダウン ===== */
 AGENTS.forEach(n => { const o=document.createElement('option'); o.value=n; o.textContent=n; agentSelect.appendChild(o); });
@@ -259,14 +265,34 @@ function openRecDb(){
   });
 }
 async function saveRecording(blob){
+  let id=null;
   try{
     const db=await openRecDb();
-    await new Promise(function(resolve,reject){
+    id=await new Promise(function(resolve,reject){
       const tx=db.transaction('recs','readwrite');
-      tx.objectStore('recs').add({at:Date.now(), size:blob.size, blob:blob});
-      tx.oncomplete=resolve; tx.onerror=function(){reject(tx.error);};
+      const req=tx.objectStore('recs').add({at:Date.now(), size:blob.size, blob:blob, summary:'', transcript:''});
+      req.onsuccess=function(){ resolve(req.result); };
+      tx.onerror=function(){ reject(tx.error); };
     });
   }catch(e){ console.warn('録音保存失敗:', e); }
+  renderRecList();
+  return id;
+}
+/* あとからAI要約・文字起こしを録音レコードに紐づける */
+async function updateRecording(id, fields){
+  if(id==null) return;
+  try{
+    const db=await openRecDb();
+    await new Promise(function(resolve){
+      const tx=db.transaction('recs','readwrite');
+      const st=tx.objectStore('recs');
+      st.get(id).onsuccess=function(e){
+        const v=e.target.result;
+        if(v){ Object.assign(v, fields); st.put(v); }
+      };
+      tx.oncomplete=resolve; tx.onerror=resolve;
+    });
+  }catch(e){}
   renderRecList();
 }
 async function purgeOldRecordings(){
@@ -291,7 +317,7 @@ function listRecordings(){
       const tx=db.transaction('recs','readonly');
       tx.objectStore('recs').openCursor().onsuccess=function(e){
         const cur=e.target.result;
-        if(cur){ out.push({id:cur.key, at:cur.value.at, size:cur.value.size, blob:cur.value.blob}); cur.continue(); }
+        if(cur){ out.push({id:cur.key, at:cur.value.at, size:cur.value.size, blob:cur.value.blob, summary:cur.value.summary||'', transcript:cur.value.transcript||''}); cur.continue(); }
         else resolve(out);
       };
       tx.onerror=function(){ resolve(out); };
@@ -315,18 +341,36 @@ async function renderRecList(){
   const recs=(await listRecordings()).sort(function(a,b){ return b.at-a.at; });
   if(!recs.length){ recList.innerHTML='<p class="text-xs text-slate-400">録音はまだありません。「電話終了」ごとにここへ保存されます。</p>'; return; }
   recList.innerHTML=recs.map(function(r){
-    return '<div class="flex items-center gap-3 border border-slate-200 rounded-lg bg-slate-50 px-3 py-1.5 text-xs" data-rec="'+r.id+'">'+
-      '<span class="font-semibold text-slate-600">'+fmtDate(r.at)+'</span>'+
-      '<span class="text-slate-400">'+fmtSize(r.size)+'</span>'+
-      '<span class="flex-1"></span>'+
-      '<button data-play="'+r.id+'" class="px-2 py-1 rounded bg-white border border-slate-300 hover:bg-slate-100">▶ 再生</button>'+
-      '<button data-dl="'+r.id+'" class="px-2 py-1 rounded bg-white border border-slate-300 hover:bg-slate-100">⬇ 保存</button>'+
-      '<button data-del="'+r.id+'" class="px-2 py-1 rounded bg-white border border-slate-300 text-rose-500 hover:bg-rose-50">✕ 削除</button>'+
+    const escH=function(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});};
+    const title=(r.summary||'').split('\n')[0].replace(/^[・\s]+/,'');
+    return '<div class="border border-slate-200 rounded-lg bg-slate-50 text-xs" data-rec="'+r.id+'">'+
+      '<div class="flex items-center gap-3 px-3 py-1.5 cursor-pointer hover:bg-slate-100 rounded-lg" data-toggle="'+r.id+'" title="クリックで要約・文字起こしを表示/非表示">'+
+        '<span class="font-semibold text-slate-600">'+fmtDate(r.at)+'</span>'+
+        '<span class="text-slate-400">'+fmtSize(r.size)+'</span>'+
+        (title?'<span class="text-slate-500 truncate max-w-[240px]">'+escH(title)+'</span>':'')+
+        '<span class="flex-1"></span>'+
+        '<button data-play="'+r.id+'" class="px-2 py-1 rounded bg-white border border-slate-300 hover:bg-slate-100">▶ 再生</button>'+
+        '<button data-dl="'+r.id+'" class="px-2 py-1 rounded bg-white border border-slate-300 hover:bg-slate-100">⬇ 保存</button>'+
+        '<button data-del="'+r.id+'" class="px-2 py-1 rounded bg-white border border-slate-300 text-rose-500 hover:bg-rose-50">✕ 削除</button>'+
+      '</div>'+
+      '<div class="hidden border-t border-slate-200 px-3 py-2 space-y-2" data-detail="'+r.id+'">'+
+        '<div><div class="font-semibold text-slate-500 mb-0.5">要約</div><div class="whitespace-pre-wrap leading-relaxed text-slate-600">'+(r.summary?escH(r.summary):'（要約なし）')+'</div></div>'+
+        '<div><div class="font-semibold text-slate-500 mb-0.5">文字起こし</div><div class="whitespace-pre-wrap leading-relaxed text-slate-600 max-h-40 overflow-y-auto nice-scroll">'+(r.transcript?escH(r.transcript):'（文字起こしなし）')+'</div></div>'+
+      '</div>'+
       '</div>';
   }).join('');
 }
 recList.addEventListener('click', async function(ev){
-  const b=ev.target.closest('button'); if(!b) return;
+  const b=ev.target.closest('button');
+  if(!b){
+    // 行クリックで要約・文字起こしを開閉
+    const row=ev.target.closest('[data-toggle]');
+    if(row){
+      const d=recList.querySelector('[data-detail="'+row.dataset.toggle+'"]');
+      if(d) d.classList.toggle('hidden');
+    }
+    return;
+  }
   const recs=await listRecordings();
   if(b.dataset.play){
     const r=recs.find(function(x){ return x.id==b.dataset.play; }); if(!r) return;
@@ -450,10 +494,17 @@ function fallbackSummary(list){
   const bullets=list.slice(0,6).map(function(x){ return '・'+x.text; }).join('\n');
   return '・'+first+'\n・'+name+'\n・'+phone+'\n・不明\n'+(bullets||'・（内容なし）');
 }
-function showSummary(text, note){
+function showSummary(text, transcript, note){
   state.summaryText=text;
+  state.transcriptAI=transcript||'';
   state.parsed=parseSummary(text);
   summaryOut.textContent=text+(note?'\n\n'+note:'');
+  transcriptOut.textContent=state.transcriptAI||'（文字起こしを取得できませんでした）';
+}
+/* AI応答を「要約」と「文字起こし全文」に分割(区切り行 ===) */
+function splitAiResponse(text){
+  const m=text.split(/\n\s*={3,}\s*\n/);
+  return { summary:(m[0]||'').trim(), transcript:(m[1]||'').trim() };
 }
 async function endCall(){
   if(!state.callActive){ showToast('通話中ではありません', true); return; }
@@ -468,7 +519,7 @@ async function endCall(){
   startRolling();
   refreshStatus(); updateBanner();
 
-  if(blob) saveRecording(blob);  // 1週間保存
+  const recId = blob ? await saveRecording(blob) : null;  // 1週間保存
 
   summaryOut.innerHTML='<span class="spinner"></span> <span class="text-indigo-600 font-semibold">AIが録音音声を解析しています…（通話の長さにより数十秒かかります）</span>';
   try{
@@ -478,23 +529,26 @@ async function endCall(){
     const res=await fetch(WEBAPP_URL,{method:'POST',body:JSON.stringify({action:'summarize', mimeType: blob.type||'audio/webm', audio:b64})});
     const j=await res.json();
     if(!(j&&j.ok&&j.text)) throw new Error(j&&j.error?j.error:'AI応答エラー');
-    showSummary(j.text.trim());
+    const parts=splitAiResponse(j.text.trim());
+    showSummary(parts.summary, parts.transcript||transcriptText(snapshot.transcript));
   }catch(e){
     console.warn('AI解析失敗→簡易要約に切替:', e);
-    showSummary(fallbackSummary(snapshot.transcript), '※AI解析に失敗したため、簡易要約です（'+(e.message||e)+'）');
+    showSummary(fallbackSummary(snapshot.transcript), transcriptText(snapshot.transcript), '※AI解析に失敗したため、簡易要約です（'+(e.message||e)+'）');
   }
+  updateRecording(recId, {summary:state.summaryText, transcript:state.transcriptAI});  // 録音一覧から見られるように紐づけ
   await saveHistory();   // 要約完了と同時に自動で履歴保存
 }
 
 function clearCall(){
   state.callActive=false;
   state.transcript=[]; state.callStartAt=null; state.lastRowUrl='';
-  state.summaryText=''; state.parsed=null; state.lastCall=null; state.pendingSave=false;
+  state.summaryText=''; state.transcriptAI=''; state.parsed=null; state.lastCall=null; state.pendingSave=false;
   state.energyL=0; state.energyR=0;
   if(state.timerId){ clearInterval(state.timerId); state.timerId=null; }
   if(state.activeSeg){ discardSeg(state.activeSeg); state.activeSeg=null; }
   stopRecognition();
   summaryOut.innerHTML='<span class="text-slate-400">「電話終了」を押すと録音音声をAIが解析し、タイトル・相手の名前・電話番号・工務店コード・要約 を箇条書きで表示し、履歴（スプレッドシート）にも自動保存します。</span>';
+  transcriptOut.innerHTML='<span class="text-slate-400">電話終了後、ここに通話全文が表示されます。</span>';
   startRolling();
   refreshStatus(); updateBanner();
 }
@@ -513,7 +567,7 @@ async function saveHistory(){
   const agent=agentSelect.value;
   if(!agent){ state.pendingSave=true; showToast('担当者を選択すると自動で履歴保存されます', true); return null; }
   const call=state.lastCall||{ transcript:state.transcript, startAt:state.callStartAt };
-  const trans=transcriptText(call.transcript);
+  const trans=state.transcriptAI||transcriptText(call.transcript);   // シートには録音ベースの文字起こしを保存
   if(!trans && !state.summaryText){ showToast('保存する内容がありません', true); return null; }
   const p=state.parsed||{};
   const payload={
@@ -544,7 +598,18 @@ async function refreshMySheetLink(){
   }catch(e){ mySheetLink.classList.add('hidden'); }
 }
 
-copySummaryBtn.addEventListener('click', async function(){ if(state.summaryText){ await clip(state.summaryText); showToast('要約をコピーしました'); } else showToast('要約がまだありません', true); });
+/* 要約コピー: （項目）値 の列挙 + （要約）+ 文字起こしセルのURL */
+function buildCopyText(){
+  const p=state.parsed||{};
+  const bullets=(p.bullets||[]).join('\n');
+  return '（タイトル）'+(p.title||'')+'\n'+
+    '（名前）'+(p.name||'')+'\n'+
+    '（電話番号）'+(p.phone||'')+'\n'+
+    '（工務店コード）'+(p.code||'')+'\n'+
+    '（要約）\n'+bullets+'\n\n'+
+    '文字起こし: '+(state.lastRowUrl||'（保存前のため未取得）');
+}
+copySummaryBtn.addEventListener('click', async function(){ if(state.summaryText){ await clip(buildCopyText()); showToast('要約をコピーしました'); } else showToast('要約がまだありません', true); });
 startCallBtn.addEventListener('click', activateCall);
 endCallBtn.addEventListener('click',endCall);
 pauseBtn.addEventListener('click',togglePause);
