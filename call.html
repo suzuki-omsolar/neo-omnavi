@@ -565,12 +565,13 @@ async function saveHistory(){
   const trans=state.transcriptAI||transcriptText(call.transcript);   // シートには録音ベースの文字起こしを保存
   if(!trans && !state.summaryText){ showToast('保存する内容がありません', true); return null; }
   const p=state.parsed||{};
+  const v=function(x){ return (x && x!=='不明') ? x : ''; };
   const payload={
     datetime:(call.startAt||new Date()).toLocaleString('ja-JP'),
-    agent:agent, company:'', name:p.name&&p.name!=='不明'?p.name:'', phone:p.phone&&p.phone!=='不明'?p.phone:'',
-    answer:'', bukken:'', address:'',
-    category:guessCategory(trans+state.summaryText),
-    summary:state.summaryText||'', transcript:trans
+    agent:agent,
+    title:v(p.title), name:v(p.name), phone:v(p.phone), company:'', code:v(p.code),
+    summary:(p.bullets||[]).join('\n'),   // 要約本文(タイトル等は各列へ)
+    transcript:trans
   };
   try{
     const res=await fetch(WEBAPP_URL,{method:'POST',body:JSON.stringify(payload)});
