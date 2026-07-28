@@ -103,6 +103,7 @@
 const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxVvYJ0QD0McQtiitEebL7bmBPyUVmohOeCw9RmYzpZeiy2_lrtQ-5quDoD-_M-kfHg/exec';
 const AGENTS = ['石田','戸塚','根木','水野','村松','藤森','河西','鈴木'];
 const MAX_AUDIO_MB = 14;               // これを超える録音はAI解析せずフォールバック(Gemini/GASの受信上限対策。32kbpsで約1時間分)
+const MIN_AUDIO_MS = 8000;             // これより短い録音はAIに送らない(短すぎるとAIが内容を創作するため)
 const REC_KEEP_MS = 7*24*60*60*1000;   // 録音の保存期間: 1週間
 
 const state = {
@@ -507,6 +508,7 @@ async function endCall(){
   aiStatus.classList.remove('hidden');
   try{
     if(!blob) throw new Error('録音データなし');
+    if(state.lastDurationMs < MIN_AUDIO_MS) throw new Error('録音が短すぎます('+Math.round(state.lastDurationMs/1000)+'秒)。通話開始の押し忘れの可能性があります');
     if(blob.size > MAX_AUDIO_MB*1024*1024) throw new Error('録音が長すぎます('+Math.round(blob.size/1048576)+'MB)');
     const b64=await blobToBase64(blob);
     const res=await fetch(WEBAPP_URL,{method:'POST',body:JSON.stringify({action:'summarize', mimeType: blob.type||'audio/webm', audio:b64})});
