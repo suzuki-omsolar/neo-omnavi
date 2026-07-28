@@ -74,7 +74,7 @@
 
     <!-- 通話状態バナー -->
     <div id="callBanner" class="rounded-lg border px-4 py-3 text-sm font-semibold bg-slate-50 border-slate-200 text-slate-600">
-      電話を取ったら「▶ 通話開始」を押してください（押した時点の約20〜40秒前から録音されます）。
+      電話を取ったら「▶ 通話開始」を押してください（押した時点から録音を開始します）。
     </div>
 
     <!-- ボタン群 -->
@@ -104,7 +104,6 @@ const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxVvYJ0QD0McQtiitEeb
 const AGENTS = ['石田','戸塚','根木','水野','村松','藤森','河西','鈴木'];
 const MAX_AUDIO_MB = 14;               // これを超える録音はAI解析せずフォールバック(Gemini/GASの受信上限対策。32kbpsで約1時間分)
 const REC_KEEP_MS = 7*24*60*60*1000;   // 録音の保存期間: 1週間
-const PREROLL_MS = 20000;              // さかのぼり録音の入替間隔(実際のさかのぼりは20〜40秒)
 
 const state = {
   audioContext:null, mediaStream:null, source:null, splitter:null,
@@ -112,7 +111,7 @@ const state = {
   shouldListen:false, recognitionRunning:false, rafId:null,
   callActive:false,
   transcript:[], callStartAt:null, lastRowUrl:'',
-  segs:[], activeSeg:null, rollTimer:null,   // さかのぼり録音(2本交互)
+  activeSeg:null,            // 通話中の録音
   summaryText:'', transcriptAI:'', parsed:null, lastCall:null, pendingSave:false,
   energyL:0, energyR:0, timerId:null,
 };
@@ -148,7 +147,7 @@ async function listDevices(){
 
 function setStatus(mode){
   const map={ idle:['停止中','bg-slate-300','text-slate-500'],
-    standby:['待機中(さかのぼり録音)','bg-emerald-500','text-emerald-600'],
+    standby:['待機中','bg-emerald-500','text-emerald-600'],
     call:['通話中(録音中)','bg-red-500 rec-dot','text-red-600'],
     paused:['一時停止中','bg-yellow-400','text-yellow-600'], error:['エラー','bg-red-500','text-red-600'] };
   const a=map[mode]||map.idle; statusText.textContent=a[0]; statusText.className=a[2]; statusPill.querySelector('span').className='w-2.5 h-2.5 rounded-full '+a[1];
@@ -168,7 +167,7 @@ function updateBanner(){
     callBanner.innerHTML='🔴 通話中 '+el+'（録音しています。終わったら「📞 電話終了」）';
   } else {
     callBanner.className='rounded-lg border px-4 py-3 text-sm font-semibold bg-slate-50 border-slate-200 text-slate-600';
-    callBanner.textContent='電話を取ったら「▶ 通話開始」を押してください（押した時点の約20〜40秒前から録音されます）。';
+    callBanner.textContent='電話を取ったら「▶ 通話開始」を押してください（押した時点から録音を開始します）。';
   }
   startCallBtn.classList.toggle('hidden', state.callActive);
   startCallBtn.classList.toggle('next-btn', !state.callActive && state.shouldListen);
@@ -188,12 +187,9 @@ async function buildAudioGraph(deviceId){
   state.analyserL=state.audioContext.createAnalyser(); state.analyserR=state.audioContext.createAnalyser();
   state.analyserL.fftSize=1024; state.analyserR.fftSize=1024;
   state.splitter.connect(state.analyserL,0); state.splitter.connect(state.analyserR,1);
-  startRolling();
 }
 
-/* ===== さかのぼり録音(2本を20秒ずらしで交互に回す) =====
-   ブラウザの録音は途中を切り出せないため、常に「20〜40秒前から録れている1本」を確保する。
-   通話開始ボタンで古い方をそのまま続行 → 開始の20〜40秒前からが1本のファイルになる。 */
+/* ===== 録音(「通話開始」を押してから「電話終了」までを1本で録る) ===== */
 function newSeg(){
   if(!window.MediaRecorder || !state.mediaStream) return null;
   try{
@@ -206,29 +202,11 @@ function newSeg(){
   }catch(e){ console.warn('録音開始失敗:', e); return null; }
 }
 function discardSeg(seg){ if(!seg) return; try{ if(seg.rec && seg.rec.state!=='inactive') seg.rec.stop(); }catch(e){} seg.chunks=[]; }
-function startRolling(){
-  stopRolling();
-  const s=newSeg(); if(s) state.segs=[s];
-  state.rollTimer=setInterval(function(){
-    const s2=newSeg(); if(s2) state.segs.push(s2);
-    while(state.segs.length>2) discardSeg(state.segs.shift());
-  }, PREROLL_MS);
-}
-function stopRolling(){
-  if(state.rollTimer){ clearInterval(state.rollTimer); state.rollTimer=null; }
-  state.segs.forEach(discardSeg); state.segs=[];
-}
-function adoptOldestSeg(){
-  if(state.rollTimer){ clearInterval(state.rollTimer); state.rollTimer=null; }
-  const seg=state.segs.shift()||null;
-  state.segs.forEach(discardSeg); state.segs=[];
-  state.activeSeg=seg;   // このrecorderは電話終了まで回し続ける
-}
 function stopActiveAndGetBlob(){
   return new Promise(function(resolve){
     const seg=state.activeSeg; state.activeSeg=null;
     if(!seg){ state.lastDurationMs=0; resolve(null); return; }
-    state.lastDurationMs=Date.now()-seg.startedAt;   // 録音の長さ(さかのぼり分を含む)
+    state.lastDurationMs=Date.now()-seg.startedAt;   // 録音の長さ
     const done=function(){ resolve(seg.chunks.length?new Blob(seg.chunks,{type:'audio/webm'}):null); };
     if(!seg.rec || seg.rec.state==='inactive'){ done(); return; }
     seg.rec.onstop=done;
@@ -322,10 +300,25 @@ async function deleteRecording(id){
       tx.oncomplete=resolve; tx.onerror=resolve;
     });
   }catch(e){}
-  renderRecList();
+  await renderRecList();
 }
 function fmtDate(ms){ return new Date(ms).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
 function fmtDur(ms){ if(!ms) return '—'; const s=Math.round(ms/1000); return Math.floor(s/60)+'分'+('0'+s%60).slice(-2)+'秒'; }
+/* 開いている録音のID(再描画しても開いたままにする) */
+const openIds={};
+function openDetail(id){
+  if(id==null) return;
+  openIds[id]=1;
+  const d=recList.querySelector('[data-detail="'+id+'"]');
+  if(d) d.classList.remove('hidden');
+}
+function toggleDetail(id){
+  const d=recList.querySelector('[data-detail="'+id+'"]');
+  if(!d) return;
+  const willOpen=d.classList.contains('hidden');
+  d.classList.toggle('hidden');
+  if(willOpen) openIds[id]=1; else delete openIds[id];
+}
 async function renderRecList(){
   const recs=(await listRecordings()).sort(function(a,b){ return b.at-a.at; });
   if(!recs.length){ recList.innerHTML='<p class="text-sm text-slate-400">録音はまだありません。「電話終了」ごとにここへ保存されます。</p>'; return; }
@@ -344,7 +337,7 @@ async function renderRecList(){
         '<button data-dl="'+r.id+'" class="'+btn+'">🎵 音声保存</button>'+
         '<button data-del="'+r.id+'" class="px-3 py-2 rounded-lg bg-white border border-slate-300 text-rose-500 hover:bg-rose-50 text-base" title="削除">🗑</button>'+
       '</div>'+
-      '<div class="hidden border-t border-slate-200 px-4 py-3 space-y-3" data-detail="'+r.id+'">'+
+      '<div class="'+(openIds[r.id]?'':'hidden ')+'border-t border-slate-200 px-4 py-3 space-y-3" data-detail="'+r.id+'">'+
         '<div><div class="font-semibold text-slate-500 mb-1 text-xs">要約</div><div class="whitespace-pre-wrap leading-relaxed text-slate-700">'+(r.summary?escH(r.summary):'（要約なし）')+'</div></div>'+
         '<div><div class="font-semibold text-slate-500 mb-1 text-xs">文字起こし</div><div class="whitespace-pre-wrap leading-relaxed text-slate-600 max-h-56 overflow-y-auto nice-scroll">'+(r.transcript?escH(r.transcript):'（文字起こしなし）')+'</div></div>'+
       '</div>'+
@@ -356,10 +349,7 @@ recList.addEventListener('click', async function(ev){
   if(!b){
     // 行クリックで要約・文字起こしを開閉
     const row=ev.target.closest('[data-toggle]');
-    if(row){
-      const d=recList.querySelector('[data-detail="'+row.dataset.toggle+'"]');
-      if(d) d.classList.toggle('hidden');
-    }
+    if(row) toggleDetail(row.dataset.toggle);
     return;
   }
   const recs=await listRecordings();
@@ -439,7 +429,7 @@ function activateCall(){
   state.callActive=true;
   state.callStartAt=new Date();
   state.transcript=[];
-  adoptOldestSeg();   // 20〜40秒前からの録音を続行
+  state.activeSeg=newSeg();   // ここから録音開始(電話終了まで1本で録る)
   state.recognition=state.recognition||initRecognition();
   safeStartRecognition();
   if(state.timerId) clearInterval(state.timerId);
@@ -451,22 +441,18 @@ async function startListening(){
   if(!state.audioContext){ await buildAudioGraph(deviceSelect.value); }
   else if(state.audioContext.state==='suspended') await state.audioContext.resume();
   state.shouldListen=true; meterLoop();
-  if(!state.callActive && !state.rollTimer) startRolling();
   refreshStatus(); updateBanner();
   pauseBtn.textContent='⏸ 一時停止'; pauseBtn.className='px-4 py-2.5 rounded-lg bg-rose-500 text-white font-semibold hover:bg-rose-600 active:scale-95 transition';
 }
 function pauseCall(){
   state.shouldListen=false;
   stopRecognition();
-  state.segs.forEach(function(s){ try{ if(s.rec.state==='recording') s.rec.pause(); }catch(e){} });
   if(state.activeSeg){ try{ if(state.activeSeg.rec.state==='recording') state.activeSeg.rec.pause(); }catch(e){} }
-  if(state.rollTimer){ clearInterval(state.rollTimer); state.rollTimer=null; }
   if(state.audioContext && state.audioContext.state==='running') state.audioContext.suspend();
   stopMeters(); setStatus('paused'); updateBanner();
   pauseBtn.textContent='▶ 待機再開'; pauseBtn.className='px-4 py-2.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 active:scale-95 transition';
 }
 function resumeAll(){
-  state.segs.forEach(function(s){ try{ if(s.rec.state==='paused') s.rec.resume(); }catch(e){} });
   if(state.activeSeg){ try{ if(state.activeSeg.rec.state==='paused') state.activeSeg.rec.resume(); }catch(e){} }
 }
 function togglePause(){ if(state.shouldListen) pauseCall(); else { resumeAll(); autoStart(); } }
@@ -513,7 +499,6 @@ async function endCall(){
   state.energyL=0; state.energyR=0;
   if(state.timerId){ clearInterval(state.timerId); state.timerId=null; }
   stopRecognition();
-  startRolling();
   refreshStatus(); updateBanner();
 
   const recId = blob ? await saveRecording(blob) : null;  // 1週間保存
@@ -536,8 +521,7 @@ async function endCall(){
   }
   aiStatus.classList.add('hidden');
   await updateRecording(recId, {summary:state.summaryText, transcript:state.transcriptAI});  // 録音一覧に紐づけ
-  const d=recList.querySelector('[data-detail="'+recId+'"]');   // 要約ができたら自動で開く
-  if(d) d.classList.remove('hidden');
+  openDetail(recId);   // 要約ができたら、その録音の要約・文字起こしを開いた状態にする
   await saveHistory();   // 要約完了と同時に自動で履歴保存
 }
 
@@ -550,7 +534,6 @@ function clearCall(){
   if(state.activeSeg){ discardSeg(state.activeSeg); state.activeSeg=null; }
   stopRecognition();
   aiStatus.classList.add('hidden');
-  startRolling();
   refreshStatus(); updateBanner();
 }
 
@@ -616,7 +599,7 @@ pauseBtn.addEventListener('click',togglePause);
 clearBtn.addEventListener('click',clearCall);
 overlayStartBtn.addEventListener('click',autoStart);
 $('refreshDevices').addEventListener('click',listDevices);
-deviceSelect.addEventListener('change',function(){ pauseCall(); stopRolling(); if(state.activeSeg){ discardSeg(state.activeSeg); state.activeSeg=null; } try{ state.audioContext&&state.audioContext.close(); }catch(e){} state.audioContext=null; state.mediaStream=null; state.recognition=null; state.callActive=false; autoStart(); });
+deviceSelect.addEventListener('change',function(){ pauseCall(); if(state.activeSeg){ discardSeg(state.activeSeg); state.activeSeg=null; } try{ state.audioContext&&state.audioContext.close(); }catch(e){} state.audioContext=null; state.mediaStream=null; state.recognition=null; state.callActive=false; autoStart(); });
 navigator.mediaDevices.addEventListener?.('devicechange',listDevices);
 
 setStatus('idle'); listDevices(); refreshMySheetLink(); updateBanner(); autoStart();
