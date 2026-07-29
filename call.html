@@ -468,7 +468,48 @@ async function autoStart(){
 /* ===== 電話終了 = 録音確定→AI解析→自動履歴保存、待機へ戻る ===== */
 function parseSummary(text){
   const lines=text.split('\n').map(function(l){ return l.replace(/^[・\-\*\s]+/,'').trim(); }).filter(Boolean);
-  return { title: lines[0]||'', name: lines[1]||'', phone: lines[2]||'', code: lines[3]||'', bullets: lines.slice(4) };
+  const p={ title: lines[0]||'', name: lines[1]||'', phone: lines[2]||'', company: lines[3]||'', code: lines[4]||'', bullets: lines.slice(5) };
+  if(!p.code || p.code==='不明'){          // 工務店コードが聞き取れなければ会社名から照合する
+    const hit=lookupKoumuten(p.company);
+    if(hit){ p.code=hit.c; p.codeFrom=hit.n; }
+  }
+  return p;
+}
+
+/* ===== 会社名 → 工務店コードの照合 =====
+   ネオOMナビ/工務店コード検索を開いたときに保存された名簿(omk_dir)を使う */
+const KS_NOISE_RE=/[\s　()（）株有限会社合同名事業協同組合・･.,、。／/\-ー–—~〜「」『』【】\[\]]+/g;
+function ksKataToHira(s){ let o=''; for(let i=0;i<s.length;i++){ const c=s.charCodeAt(i); o+=(c>=0x30A1&&c<=0x30F6)?String.fromCharCode(c-0x60):s[i]; } return o; }
+function ksNorm(t){ return t?ksKataToHira(t.normalize('NFKC').toLowerCase()).replace(KS_NOISE_RE,''):''; }
+function ksBigrams(s){ if(s.length<2) return s?[s]:[]; const set={},out=[]; for(let i=0;i<s.length-1;i++){ const g=s.substr(i,2); if(!set[g]){set[g]=1;out.push(g);} } return out; }
+function ksSim(a,b){ if(!a||!b) return 0; const A=ksBigrams(a),B=ksBigrams(b); if(!A.length||!B.length) return 0; const sb={}; B.forEach(function(g){sb[g]=1;}); let n=0; A.forEach(function(g){ if(sb[g]) n++; }); return 2*n/(A.length+B.length); }
+let KS_DIR=null;
+function loadDir(){
+  if(KS_DIR) return KS_DIR;
+  try{
+    const raw=JSON.parse(localStorage.getItem('omk_dir')||'[]');
+    KS_DIR=raw.map(function(d){ return {c:d.c, n:d.n, nn:ksNorm(d.n), kn:ksNorm(d.k)}; });
+  }catch(e){ KS_DIR=[]; }
+  return KS_DIR;
+}
+function lookupKoumuten(company){
+  if(!company || company==='不明') return null;
+  const dir=loadDir();
+  if(!dir.length) return null;
+  const q=ksNorm(company);
+  if(!q) return null;
+  let best=null, bestScore=0;
+  for(let i=0;i<dir.length;i++){
+    const d=dir[i];
+    let s=0;
+    if(d.nn===q) s=1;                              // 完全一致
+    else if(d.nn.indexOf(q)===0||q.indexOf(d.nn)===0) s=0.9;   // 前方一致
+    else if(d.nn.indexOf(q)>=0) s=0.8;             // 部分一致
+    else s=Math.max(ksSim(q,d.nn), ksSim(q,d.kn)); // 似た名前
+    if(s>bestScore){ bestScore=s; best=d; }
+    if(s===1) break;
+  }
+  return (bestScore>=0.6) ? best : null;   // 確度が低いときは付けない(誤ったコードを防ぐ)
 }
 function fallbackSummary(list){
   const t=transcriptText(list);
@@ -476,7 +517,7 @@ function fallbackSummary(list){
   const phone=(function(){ const m=t.replace(/[０-９]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);}).match(/0\d[\d\-\s]{7,12}\d/); return m?m[0].replace(/\s/g,''):'不明'; })();
   const name=(function(){ const m=t.match(/([一-龥]{1,5})[ 　]?(?:と申します|と言います|といいます)/); return m?m[1]:'不明'; })();
   const bullets=list.slice(0,6).map(function(x){ return '・'+x.text; }).join('\n');
-  return '・'+first+'\n・'+name+'\n・'+phone+'\n・不明\n'+(bullets||'・（内容なし）');
+  return '・'+first+'\n・'+name+'\n・'+phone+'\n・不明\n・不明\n'+(bullets||'・（内容なし）');
 }
 function showSummary(text, transcript){
   state.summaryText=text;
@@ -569,7 +610,7 @@ async function saveHistory(){
   const payload={
     datetime:(call.startAt||new Date()).toLocaleString('ja-JP'),
     agent:agent,
-    title:v(p.title), name:v(p.name), phone:v(p.phone), company:'', code:v(p.code),
+    title:v(p.title), name:v(p.name), phone:v(p.phone), company:v(p.company), code:v(p.code),
     summary:(p.bullets||[]).join('\n'),   // 要約本文(タイトル等は各列へ)
     transcript:trans
   };
@@ -601,6 +642,7 @@ function buildCopyText(rec){
   return '（タイトル）'+(p.title||'')+'\n'+
     '（名前）'+(p.name||'')+'\n'+
     '（電話番号）'+(p.phone||'')+'\n'+
+    '（会社名）'+(p.company||'')+'\n'+
     '（工務店コード）'+(p.code||'')+'\n'+
     '（要約）\n'+bullets+'\n\n'+
     '文字起こし: '+(rec.url||'（未保存のため未取得）');

@@ -901,6 +901,14 @@ document.addEventListener('click', function (e) {
 });
 
 /* ================= 起動 ================= */
+/* 通話ツール(call.html)が会社名→工務店コードを引けるよう、コードと名称だけを共有保存する */
+function cacheDirectory() {
+  try {
+    var slim = (DATA.directory || []).map(function (d) { return { c: d.c, n: d.n, k: d.k }; });
+    localStorage.setItem('omk_dir', JSON.stringify(slim));
+  } catch (e) { /* 容量超過などは無視(照合機能が使えないだけ) */ }
+}
+
 function boot(data) {
   DATA = data;
   IDX = { cards: {}, bukken: {}, koumuten: {}, products: {} };
@@ -908,6 +916,7 @@ function boot(data) {
   DATA.bukken.forEach(function (b) { IDX.bukken[b.code] = b; });
   DATA.koumuten.forEach(function (k) { IDX.koumuten[k.code] = k; });
   DATA.products.forEach(function (p) { IDX.products[p.code] = p; });
+  cacheDirectory();
   document.getElementById('gate').style.display = 'none';
   document.getElementById('shell').style.display = '';
   route();
