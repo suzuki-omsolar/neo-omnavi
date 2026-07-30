@@ -327,7 +327,7 @@ async function renderRecList(){
   const btn='px-3 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-sm font-semibold';
   recList.innerHTML=recs.map(function(r){
     const escH=function(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});};
-    const title=(r.summary||'').split('\n')[0].replace(/^[・\s]+/,'');
+    const title=(r.summary||'').split('\n')[0].replace(/^[・\-\*\s]+/,'');
     return '<div class="border border-slate-200 rounded-lg bg-slate-50 text-sm" data-rec="'+r.id+'">'+
       '<div class="flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-slate-100 rounded-lg" data-toggle="'+r.id+'" title="クリックで要約・文字起こしを表示/非表示">'+
         '<span class="font-semibold text-slate-700 whitespace-nowrap">'+fmtDate(r.at)+'</span>'+
@@ -516,8 +516,8 @@ function fallbackSummary(list){
   const first=((list[0]&&list[0].text)||'通話内容').slice(0,10);
   const phone=(function(){ const m=t.replace(/[０-９]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);}).match(/0\d[\d\-\s]{7,12}\d/); return m?m[0].replace(/\s/g,''):'不明'; })();
   const name=(function(){ const m=t.match(/([一-龥]{1,5})[ 　]?(?:と申します|と言います|といいます)/); return m?m[1]:'不明'; })();
-  const bullets=list.slice(0,6).map(function(x){ return '・'+x.text; }).join('\n');
-  return '・'+first+'\n・'+name+'\n・'+phone+'\n・不明\n・不明\n'+(bullets||'・（内容なし）');
+  const bullets=list.slice(0,6).map(function(x){ return x.text; }).join('\n');
+  return first+'\n'+name+'\n'+phone+'\n不明\n不明\n'+(bullets||'（内容なし）');
 }
 function showSummary(text, transcript){
   state.summaryText=text;
