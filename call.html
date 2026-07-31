@@ -113,7 +113,7 @@ const state = {
   shouldListen:false, recognitionRunning:false, rafId:null,
   callActive:false,
   transcript:[], callStartAt:null, lastRowUrl:'',
-  activeSeg:null,            // 通話中の録音
+  activeSeg:null, recErr:'', recDiag:'',   // 通話中の録音と、失敗時の原因メモ
   summaryText:'', transcriptAI:'', parsed:null, lastCall:null, pendingSave:false,
   energyL:0, energyR:0, timerId:null,
 };
@@ -192,26 +192,38 @@ async function buildAudioGraph(deviceId){
 }
 
 /* ===== 録音(「通話開始」を押してから「電話終了」までを1本で録る) ===== */
+function streamAlive(){
+  if(!state.mediaStream || !state.mediaStream.getAudioTracks) return false;
+  const t=state.mediaStream.getAudioTracks()[0];
+  return !!t && t.readyState==='live';
+}
 function newSeg(){
-  if(!window.MediaRecorder || !state.mediaStream) return null;
+  if(!window.MediaRecorder){ state.recErr='このブラウザは録音に未対応です(Chrome/Edgeをお使いください)'; return null; }
+  if(!streamAlive()){ state.recErr='マイクが使える状態ではありません'; return null; }
   try{
     const seg={chunks:[], startedAt:Date.now(), rec:null};
     const opt = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? {mimeType:'audio/webm;codecs=opus', audioBitsPerSecond:32000} : {};
     seg.rec=new MediaRecorder(state.mediaStream, opt);
     seg.rec.ondataavailable=function(e){ if(e.data && e.data.size) seg.chunks.push(e.data); };
+    seg.rec.onerror=function(e){ console.warn('録音エラー:', e); state.recErr='録音中にエラーが発生しました'; };
     seg.rec.start(1000);
+    state.recErr='';
     return seg;
-  }catch(e){ console.warn('録音開始失敗:', e); return null; }
+  }catch(e){ console.warn('録音開始失敗:', e); state.recErr='録音を開始できませんでした('+(e.name||e.message||e)+')'; return null; }
 }
 function discardSeg(seg){ if(!seg) return; try{ if(seg.rec && seg.rec.state!=='inactive') seg.rec.stop(); }catch(e){} seg.chunks=[]; }
 function stopActiveAndGetBlob(){
   return new Promise(function(resolve){
     const seg=state.activeSeg; state.activeSeg=null;
-    if(!seg){ state.lastDurationMs=0; resolve(null); return; }
+    if(!seg){ state.lastDurationMs=0; state.recDiag=state.recErr||'録音が開始されていませんでした'; resolve(null); return; }
     state.lastDurationMs=Date.now()-seg.startedAt;   // 録音の長さ
-    const done=function(){ resolve(seg.chunks.length?new Blob(seg.chunks,{type:'audio/webm'}):null); };
+    const done=function(){
+      state.recDiag=seg.chunks.length?'':(state.recErr||'音声データが空でした(録音時間'+Math.round(state.lastDurationMs/1000)+'秒)');
+      resolve(seg.chunks.length?new Blob(seg.chunks,{type:'audio/webm'}):null);
+    };
     if(!seg.rec || seg.rec.state==='inactive'){ done(); return; }
     seg.rec.onstop=done;
+    try{ seg.rec.requestData(); }catch(e){}   // 直近ぶんを確実に書き出す
     try{ seg.rec.stop(); }catch(e){ done(); }
   });
 }
@@ -425,13 +437,27 @@ function transcriptText(list){
 }
 
 /* ===== 通話開始(ボタン) ===== */
-function activateCall(){
+async function activateCall(){
   if(state.callActive) return;
-  if(!state.mediaStream){ showToast('マイク準備中です。少し待ってからもう一度押してください', true); autoStart(); return; }
+  // マイクが未取得/切断されている場合は取り直してから始める(録音なしで通話が進むのを防ぐ)
+  if(!streamAlive()){
+    showToast('マイクを準備しています…');
+    try{
+      try{ state.audioContext && state.audioContext.close(); }catch(e){}
+      state.audioContext=null; state.mediaStream=null; state.recognition=null;
+      await buildAudioGraph(deviceSelect.value);
+      state.shouldListen=true; meterLoop();
+    }catch(e){
+      showToast('マイクを準備できませんでした。マイクの許可と接続を確認してください', true);
+      showOverlay('マイクを使用できません。アドレスバーの🔒から許可を確認してください。');
+      return;
+    }
+  }
   state.callActive=true;
   state.callStartAt=new Date();
   state.transcript=[];
   state.activeSeg=newSeg();   // ここから録音開始(電話終了まで1本で録る)
+  if(!state.activeSeg) showToast('⚠ '+(state.recErr||'録音を開始できませんでした'), true);
   state.recognition=state.recognition||initRecognition();
   safeStartRecognition();
   if(state.timerId) clearInterval(state.timerId);
@@ -549,7 +575,7 @@ async function endCall(){
 
   aiStatus.classList.remove('hidden');
   try{
-    if(!blob) throw new Error('録音データなし');
+    if(!blob) throw new Error(state.recDiag||'録音データなし');
     if(state.lastDurationMs < MIN_AUDIO_MS) throw new Error('録音が短すぎます('+Math.round(state.lastDurationMs/1000)+'秒)。通話開始の押し忘れの可能性があります');
     if(blob.size > MAX_AUDIO_MB*1024*1024) throw new Error('録音が長すぎます('+Math.round(blob.size/1048576)+'MB)');
     if(state.lastDurationMs > LONG_AUDIO_MS){
